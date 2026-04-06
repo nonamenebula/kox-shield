@@ -1,0 +1,68 @@
+#!/bin/sh
+# KOX VPN Telegram Bot — Entware init.d service
+
+PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
+export PATH
+
+DAEMON=/opt/bin/kox-bot
+PID_FILE=/tmp/kox-bot.lock
+LOG_FILE=/opt/var/log/kox-bot.log
+DESC="KOX Telegram Bot"
+
+start() {
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "$DESC already running (PID $(cat "$PID_FILE"))"
+    return 0
+  fi
+  rm -f "$PID_FILE"
+  echo "Starting $DESC..."
+  $DAEMON >> "$LOG_FILE" 2>&1 &
+  sleep 2
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "$DESC started (PID $(cat "$PID_FILE"))"
+  else
+    echo "$DESC FAILED to start! Check $LOG_FILE"
+    return 1
+  fi
+}
+
+stop() {
+  if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      kill "$PID" 2>/dev/null
+      sleep 1
+      kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+    echo "$DESC stopped"
+  else
+    echo "$DESC is not running"
+  fi
+}
+
+restart() {
+  stop
+  sleep 1
+  start
+}
+
+status() {
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "$DESC is running (PID $(cat "$PID_FILE"))"
+    echo "Last log:"
+    tail -3 "$LOG_FILE" 2>/dev/null | sed 's/^/  /'
+    return 0
+  else
+    echo "$DESC is NOT running"
+    return 1
+  fi
+}
+
+case "$1" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) restart ;;
+  status)  status ;;
+  *)       echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
