@@ -594,7 +594,7 @@ CONF
   # Сохранить параметры сервера для kox CLI
   cat > /tmp/kox.conf << KOXCONF
 # KOX VPN — сохранённые параметры
-# https://kox.nonamenebula.ru | t.me/PrivateProxyKox
+# https://kox.nonamenebula.ru/register | t.me/PrivateProxyKox
 KOX_SERVER="${VLESS_HOST}"
 KOX_PORT="${VLESS_PORT}"
 KOX_UUID="${VLESS_UUID}"
@@ -706,7 +706,7 @@ phase_install_kox_cli() {
   cat > /tmp/kox-cli.sh << 'KOXCLI'
 #!#!/bin/sh
 # KOX VPN Management Console
-# https://kox.nonamenebula.ru | t.me/PrivateProxyKox
+# https://kox.nonamenebula.ru/register | t.me/PrivateProxyKox
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -742,7 +742,7 @@ kox_banner() {
   printf "\n"
   printf "${C}            ── VPN Console ──${N}\n"
   printf "\n"
-  printf "  ${C}🌐 $(hyperlink 'https://kox.nonamenebula.ru' 'kox.nonamenebula.ru')${N}\n"
+  printf "  ${C}🌐 $(hyperlink 'https://kox.nonamenebula.ru/register' 'kox.nonamenebula.ru')${N}\n"
   printf "  ${C}📢 $(hyperlink 'https://t.me/PrivateProxyKox' 't.me/PrivateProxyKox')${N}\n"
   printf "  ${C}🤖 $(hyperlink 'https://t.me/kox_nonamenebula_bot' '@kox_nonamenebula_bot')${N}\n"
   sep

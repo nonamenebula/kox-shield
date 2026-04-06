@@ -36,7 +36,7 @@ kox_banner() {
   printf "\n"
   printf "${C}            ── VPN Console ──${N}\n"
   printf "\n"
-  printf "  ${C}🌐 $(hyperlink 'https://kox.nonamenebula.ru' 'kox.nonamenebula.ru')${N}\n"
+  printf "  ${C}🌐 $(hyperlink 'https://kox.nonamenebula.ru/register' 'kox.nonamenebula.ru')${N}\n"
   printf "  ${C}📢 $(hyperlink 'https://t.me/PrivateProxyKox' 't.me/PrivateProxyKox')${N}\n"
   printf "  ${C}🤖 $(hyperlink 'https://t.me/kox_nonamenebula_bot' '@kox_nonamenebula_bot')${N}\n"
   sep

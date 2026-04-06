@@ -42,7 +42,7 @@ banner() {
   printf "\n"
   printf "${C}        ── VPN Installer for Keenetic ──${N}\n"
   printf "\n"
-  printf "  ${C}🌐 kox.nonamenebula.ru${N}\n"
+  printf "  ${C}🌐 kox.nonamenebula.ru/register${N}\n"
   printf "  ${C}📢 t.me/PrivateProxyKox${N}\n"
   printf "  ${C}🤖 @kox_nonamenebula_bot${N}\n"
   sep
