@@ -9,52 +9,61 @@
   ╚═╝  ╚═╝   ╚═════╝  ╚═╝  ╚═╝
 ```
 
-**VLESS split-tunnel VPN для роутеров Keenetic**
+**VLESS split-tunnel VPN for Keenetic routers**
 
 [![Telegram](https://img.shields.io/badge/Telegram-Channel-blue?logo=telegram)](https://t.me/PrivateProxyKox)
 [![Bot](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://t.me/kox_nonamenebula_bot)
 [![Site](https://img.shields.io/badge/🌐-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
+🌐 **Language / Язык:** **English** · [Русский](README.ru.md)
+
 </div>
 
 ---
 
-## 🚀 Что такое KOX VPN?
+## 🚀 What is KOX VPN?
 
-**KOX VPN** — полностью автоматизированная установка VLESS/Reality туннеля на роутеры Keenetic. Весь трафик к заблокированным сайтам идёт через VPN, остальной — напрямую через ваш интернет провайдер. Никаких ручных настроек.
+**KOX VPN** is a fully automated VLESS/Reality tunnel setup for Keenetic routers. Traffic to blocked sites goes through the VPN; everything else goes directly through your ISP. No manual configuration needed.
 
-### ✨ Ключевые возможности
+> ✅ **Migrating from Kvass?** The installer automatically detects and cleanly removes Kvass, Shadowsocks, and sing-box before setting up KOX VPN — just answer "yes" when prompted.
 
-| Функция | Описание |
-|---------|----------|
-| 🔀 **Split-tunnel** | Только заблокированные сайты через VPN, всё остальное напрямую |
-| ⚡ **VLESS + Reality** | Современный протокол, не определяется провайдером |
-| 📱 **Telegram Bot** | Полное управление роутером прямо из Telegram |
-| 💻 **KOX Console** | Удобный CLI на роутере — `kox status`, `kox add`, `kox list`... |
-| 🔄 **Авто-обновление** | Ежедневное обновление серверных параметров из подписки |
-| 🏠 **Для всей сети** | Подключили роутер — работает на всех устройствах без настройки |
+### ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔀 **Split-tunnel** | Only blocked sites through VPN, everything else direct |
+| ⚡ **VLESS + Reality** | Modern protocol — undetectable by ISP/DPI |
+| 📱 **Telegram Bot** | Full router management from Telegram |
+| 💻 **KOX Console** | Router CLI — `kox status`, `kox add`, `kox list`... |
+| 🔄 **Auto-update** | Daily subscription parameter refresh |
+| 🏠 **Whole network** | Works on all devices once the router is set up |
 
 ---
 
-## 🔑 VLESS сервер — откуда взять?
+## 🔑 Getting a VLESS Server
 
-Для работы KOX VPN нужен **VLESS сервер**. Есть два варианта:
+### Option 1: KOX VPN Subscription (ready in 1 minute)
 
-### Вариант 1: Подписка KOX VPN (готово за 1 минуту)
+Register at **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — get a ready VLESS subscription with multiple servers, support, and auto-update.
 
-Зарегистрируйтесь на **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — получите готовую VLESS-подписку с несколькими серверами, поддержкой и автообновлением.
+### Option 2: Your Own Server
 
-### Вариант 2: Свой сервер (для продвинутых)
+If you have a VPS, set up your own VLESS/Reality server:
 
-Если у вас уже есть VPS, можно поднять собственный VLESS/Reality сервер:
-
-**1. Установите Xray на сервер (Ubuntu/Debian):**
+**1. Install Xray on the server (Ubuntu/Debian):**
 ```bash
 bash <(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)
 ```
 
-**2. Создайте конфиг `/usr/local/etc/xray/config.json`:**
+**2. Generate keys:**
+```bash
+xray x25519                          # privateKey + publicKey
+openssl rand -hex 4                  # shortId
+cat /proc/sys/kernel/random/uuid     # UUID
+```
+
+**3. Create `/usr/local/etc/xray/config.json`:**
 ```json
 {
   "inbounds": [{
@@ -80,61 +89,64 @@ bash <(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)
 }
 ```
 
-**3. Сгенерируйте ключи:**
-```bash
-xray x25519            # privateKey + publicKey
-openssl rand -hex 4    # shortId
-cat /proc/sys/kernel/random/uuid  # UUID
+**4. Your VLESS link will look like:**
+```
+vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBLIC-KEY&sid=SHORT-ID&flow=xtls-rprx-vision#MyServer
 ```
 
-**4. Ваша VLESS-ссылка будет выглядеть так:**
-```
-vless://UUID@YOUR-SERVER-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBLIC-KEY&sid=SHORT-ID&flow=xtls-rprx-vision#MyServer
-```
-
-**5. Вставьте эту ссылку при установке KOX VPN на роутер.**
-
-> 💡 Подробнее о Reality: [github.com/XTLS/REALITY](https://github.com/XTLS/REALITY)
+> 💡 More about Reality: [github.com/XTLS/REALITY](https://github.com/XTLS/REALITY)
 
 ---
 
-## 📦 Установка на роутер
+## 📦 Installation
 
-### Способ 1: Прямо с роутера (рекомендуется)
+### Method 1: Directly on the Router (recommended)
 
-Подключитесь к роутеру по SSH (порт 222) и выполните одну команду:
+Connect to your router via SSH (port 222) and run one command:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/install.sh | sh
 ```
 
-> **Требования:** Keenetic с установленным [Entware](https://help.keenetic.com/hc/ru/articles/360021214160)
+> **Requirements:** Keenetic router with [Entware](https://help.keenetic.com/hc/en-us/articles/360021214160) installed
 
-Скрипт сам:
-- Установит `xray-core`, `curl`, `jq`
-- Спросит URL подписки или VLESS-ссылку
-- При нескольких серверах предложит выбор
-- Настроит прозрачный туннель и iptables
-- Установит `kox` CLI для управления
+The script will:
+- Install `xray-core`, `curl`, `jq`
+- Ask for your subscription URL or VLESS link
+- Show server selection if multiple servers are available
+- **Optionally remove Kvass / Shadowsocks / sing-box** (asks for confirmation first)
+- Configure transparent tunnel and iptables rules
+- Install the `kox` CLI
 
-### Способ 2: С компьютера Mac/Linux (расширенный)
+### Method 2: From Mac / Linux PC (advanced)
 
 ```bash
-# Скачайте установщик
 curl -O https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/xraykit.sh
 chmod +x xraykit.sh
-
-# Запустите
 ./xraykit.sh
 ```
 
-Дополнительно настроит Telegram Bot и проведёт финальную проверку туннеля.
+Additionally sets up the Telegram Bot and runs a final tunnel verification.
 
 ---
 
-## 🖥️ KOX Console — управление на роутере
+## 🔄 Migrating from Kvass
 
-После установки на роутере появляется команда `kox`:
+KOX VPN is a full replacement for Kvass with a more modern protocol (VLESS/Reality instead of Shadowsocks).
+
+The installer handles migration automatically:
+1. Detects installed Kvass, Shadowsocks, or sing-box
+2. **Asks for confirmation** before removing anything
+3. Cleanly stops services and removes configs
+4. Installs KOX VPN with your VLESS subscription
+
+Your router settings and other configurations are **not affected**.
+
+---
+
+## 🖥️ KOX Console
+
+After installation the `kox` command is available on the router:
 
 ```
   ██╗  ██╗  ██████╗  ██╗  ██╗
@@ -152,173 +164,191 @@ chmod +x xraykit.sh
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-### Команды
+### Commands
 
 ```bash
-# Статус и управление
-kox status              # Статус VPN, Xray, iptables
-kox on                  # Включить VPN
-kox off                 # Выключить VPN (Xray работает, трафик напрямую)
-kox restart             # Перезапустить Xray
+# Status & control
+kox status              # VPN, Xray, iptables status
+kox on                  # Enable VPN
+kox off                 # Disable VPN (Xray keeps running, traffic goes direct)
+kox restart             # Restart Xray
 
-# Домены и IP
-kox add example.com     # Добавить домен в туннель
-kox del example.com     # Удалить домен из туннеля
-kox check example.com   # Проверить — идёт домен через туннель?
-kox list                # Список всех доменов
-kox add-ip 1.2.3.0/24  # Добавить IP/подсеть в туннель
-kox del-ip 1.2.3.0/24  # Удалить IP/подсеть
-kox list-ip             # Список IP/подсетей
+# Domains & IPs
+kox add example.com     # Add domain to tunnel
+kox del example.com     # Remove domain from tunnel
+kox check example.com   # Check — does this domain go through tunnel?
+kox list                # List all tunneled domains
+kox add-ip 1.2.3.0/24  # Add IP/subnet to tunnel
+kox del-ip 1.2.3.0/24  # Remove IP/subnet
+kox list-ip             # List all IP/subnets
 
-# Логи и диагностика
-kox log                 # Последние ошибки Xray
-kox log-live            # Логи в реальном времени (Ctrl+C)
-kox test                # Проверить корректность config.json
-kox stats               # Статистика трафика
-kox server              # Параметры VLESS сервера
+# Logs & diagnostics
+kox log                 # Recent Xray errors
+kox log-live            # Live log stream (Ctrl+C to stop)
+kox test                # Validate config.json
+kox stats               # Traffic statistics
+kox server              # VLESS server parameters
 
-# Обновление
-kox update-sub          # Обновить параметры из подписки
-kox cron-on             # Авто-обновление (ежедневно 04:00)
-kox cron-off            # Отключить авто-обновление
+# Updates
+kox update-sub          # Update server parameters from subscription
+kox cron-on             # Enable auto-update (daily at 04:00)
+kox cron-off            # Disable auto-update
 
-# Резервные копии
-kox backup              # Создать бэкап config.json
-kox restore [файл]      # Восстановить из бэкапа
+# Backups
+kox backup              # Backup config.json
+kox restore [file]      # Restore from backup
 
 # Telegram Bot
-kox bot                 # Статус бота
-kox admin set <ID>      # Назначить Telegram администратора
-kox admin show          # Показать текущего администратора
+kox bot                 # Bot status
+kox admin set <ID>      # Set Telegram administrator
+kox admin show          # Show current administrator
 ```
 
 ---
 
 ## 🤖 Telegram Bot
 
-Управляйте роутером прямо из Telegram без SSH:
+Manage your router from Telegram without SSH:
 
 ```
   ┌─────────────────────────────────────┐
-  │  🔑 KOX VPN — управление роутером  │
-  │  Выберите действие:                 │
+  │  🔑 KOX VPN — Router Management    │
+  │  Choose action:                     │
   ├──────────────┬──────────────────────┤
-  │ 📊 Статус   │ 🌐 Сервер            │
-  │ ✅ Вкл VPN  │ ❌ Выкл VPN         │
-  │ 🔄 Рестарт  │ 🔧 Тест конфига     │
-  │ 📋 Домены   │ 🔢 IP-список         │
-  │ ➕ Домен    │ ➖ Удалить домен     │
-  │ 📝 Логи     │ 📈 Трафик            │
-  │ 💾 Бэкап    │ 🗑️ Очистить логи    │
+  │ 📊 Status   │ 🌐 Server            │
+  │ ✅ VPN On   │ ❌ VPN Off           │
+  │ 🔄 Restart  │ 🔧 Test config       │
+  │ 📋 Domains  │ 🔢 IP list           │
+  │ ➕ Add      │ ➖ Remove domain      │
+  │ 📝 Logs     │ 📈 Traffic           │
+  │ 💾 Backup   │ 🗑️ Clear logs        │
   └─────────────┴──────────────────────┘
 ```
 
-**Возможности:**
-- ✅ Цветные кнопки (Bot API 9.4)
-- ✅ Подтверждение для опасных действий
-- ✅ Чат без флуда — сообщения редактируются на месте
-- ✅ Анимация печатания при длинных операциях
-- ✅ Меню команд `/` в Telegram
-- ✅ Только для администратора
-- ✅ Трафик бота идёт через VPN (не блокируется)
+**Features:**
+- ✅ Colored buttons (Bot API 9.4)
+- ✅ Confirmation dialogs for dangerous actions
+- ✅ No chat flooding — messages edited in place
+- ✅ Typing animation for long operations
+- ✅ `/` command menu in Telegram
+- ✅ Admin-only — all other users are silently ignored
+- ✅ Bot traffic routes through VPN (not blocked by ISP)
 
-### Настройка бота
+### Bot Setup
 
-**1.** Создайте бота у [@BotFather](https://t.me/BotFather) → `/newbot` → скопируйте токен
+**1.** Create a bot at [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token
 
-**2.** Узнайте свой Telegram ID у [@userinfobot](https://t.me/userinfobot)
+**2.** Get your Telegram ID from [@userinfobot](https://t.me/userinfobot)
 
-**3.** На роутере добавьте в `/opt/etc/xray/kox.conf`:
-```bash
+**3.** Add to `/opt/etc/xray/kox.conf` on the router:
+```
 KOX_BOT_TOKEN="1234567890:AAF..."
 KOX_ADMIN_ID="123456789"
 ```
 
-**4.** Запустите:
+**4.** Start the bot:
 ```bash
 /opt/etc/init.d/S90kox-bot start
 ```
 
 ---
 
-## 📋 Встроенные домены (по умолчанию)
+## 📋 Built-in Domain List
 
-| Категория | Сервисы |
-|-----------|---------|
-| 📹 Видео | YouTube, TikTok, Twitch, Netflix |
-| 💬 Мессенджеры | Telegram, WhatsApp, Signal, Viber, Discord |
-| 📱 Соцсети | Instagram, Facebook, Twitter/X, LinkedIn, Reddit |
-| 🎵 Музыка | Spotify |
+| Category | Services |
+|----------|----------|
+| 📹 Video | YouTube, TikTok, Twitch, Netflix |
+| 💬 Messengers | Telegram, WhatsApp, Signal, Viber, Discord |
+| 📱 Social | Instagram, Facebook, Twitter/X, LinkedIn, Reddit |
+| 🎵 Music | Spotify |
 | 🤖 AI | ChatGPT, Claude, Gemini, Copilot |
-| 🎮 Игры | Steam |
-| 💻 Разработка | GitHub, npm, Docker |
-| 📚 Другое | Wikipedia, Medium, Notion, Figma, Zoom, ProtonMail |
-| 📰 Торренты | Rutracker, Rutor |
+| 🎮 Gaming | Steam |
+| 💻 Dev tools | GitHub, npm, Docker |
+| 📚 Other | Wikipedia, Medium, Notion, Figma, Zoom, ProtonMail |
+| 📰 Torrents | Rutracker, Rutor |
 
-Добавить свой сайт:
+Add any site with one command:
 ```bash
-kox add my-site.com
+kox add my-blocked-site.com
 ```
 
 ---
 
-## 🔧 Требования
+## 🆚 KOX VPN vs Kvass
 
-- **Роутер:** Keenetic (любая модель с Entware)
-- **Entware:** [Инструкция по установке](https://help.keenetic.com/hc/ru/articles/360021214160)
-- **VLESS сервер:** Подписка [kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register) или свой сервер (см. выше)
+| | KOX VPN | Kvass |
+|--|---------|-------|
+| Protocol | VLESS + Reality | Shadowsocks |
+| DPI bypass | ✅ Undetectable | ⚠️ Partial |
+| Install from router | ✅ `wget \| sh` | ✅ |
+| Install from PC | ✅ `xraykit.sh` | ✅ |
+| CLI console | ✅ `kox` | ✅ |
+| Telegram Bot | ✅ Built-in | ❌ |
+| Colored bot buttons | ✅ Bot API 9.4 | — |
+| Split-tunnel | ✅ Domain + IP | ✅ |
+| Auto-update | ✅ | ✅ |
+| Migrate from Kvass | ✅ Automatic | — |
+| Open source | ✅ | ✅ |
 
 ---
 
-## 📂 Структура файлов на роутере
+## 🔧 Requirements
+
+- **Router:** Keenetic (any model with Entware support)
+- **Entware:** [Installation guide](https://help.keenetic.com/hc/en-us/articles/360021214160)
+- **VLESS server:** Subscription at [kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register) or your own server
+
+---
+
+## 📂 File Structure on Router
 
 ```
 /opt/
 ├── bin/
-│   ├── kox              ← CLI управление
+│   ├── kox              ← CLI management tool
 │   └── kox-bot          ← Telegram bot daemon
 ├── etc/
 │   ├── xray/
-│   │   ├── config.json  ← Конфиг Xray (VLESS + routing)
-│   │   └── kox.conf     ← Параметры сервера и токен бота
+│   │   ├── config.json  ← Xray config (VLESS + routing rules)
+│   │   └── kox.conf     ← Server params + bot token
 │   ├── ndm/netfilter.d/
-│   │   └── 99-kox-nat.sh  ← iptables правила (автозапуск)
+│   │   └── 99-kox-nat.sh  ← iptables rules (auto-applied on boot)
 │   └── init.d/
-│       ├── S24xray      ← Xray сервис (автозапуск)
-│       └── S90kox-bot   ← Telegram bot сервис (автозапуск)
+│       ├── S24xray      ← Xray service (autostart)
+│       └── S90kox-bot   ← Telegram bot service (autostart)
 └── var/log/
-    ├── xray-err.log     ← Логи Xray
-    └── kox-bot.log      ← Логи бота
+    ├── xray-err.log     ← Xray error log
+    └── kox-bot.log      ← Bot log
 ```
 
 ---
 
-## ❓ Частые вопросы
+## ❓ FAQ
 
-**Q: Не работает YouTube после установки**
+**Q: YouTube doesn't work after installation**
 ```bash
-kox status   # Всё зелёным?
-kox log      # Есть ошибки?
-kox test     # Конфиг корректен?
+kox status   # Everything green?
+kox log      # Any errors?
+kox test     # Config valid?
 ```
 
-**Q: Как добавить сайт который не открывается?**
+**Q: How to add a site that's not working?**
 ```bash
-kox add site.com   # Xray перезапустится автоматически
+kox add site.com   # Xray restarts automatically
 ```
 
-**Q: Как временно выключить VPN (для банков)?**
+**Q: How to temporarily disable VPN (e.g. for banking)?**
 ```bash
-kox off   # Трафик напрямую, Xray не останавливается
-kox on    # Вернуть обратно
+kox off   # Traffic goes direct, Xray keeps running
+kox on    # Re-enable
 ```
 
-**Q: Как обновить параметры сервера?**
+**Q: How to update server parameters?**
 ```bash
-kox update-sub   # Обновит из подписки и перезапустит Xray
+kox update-sub   # Updates from subscription, restarts Xray
 ```
 
-**Q: Бот не отвечает**
+**Q: Bot is not responding**
 ```bash
 kox bot
 /opt/etc/init.d/S90kox-bot restart
@@ -327,9 +357,9 @@ tail -20 /opt/var/log/kox-bot.log
 
 ---
 
-## 📄 Лицензия
+## 📄 License
 
-MIT License — используйте свободно.
+MIT License — free to use, attribution appreciated.
 
 ---
 
