@@ -1,11 +1,11 @@
 #!/bin/sh
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║   KOX VPN — Installer for Keenetic Router (Entware)            ║
+# ║   KOX Shield — Installer for Keenetic Router (Entware)            ║
 # ║   https://kox.nonamenebula.ru | t.me/PrivateProxyKox           ║
 # ╚══════════════════════════════════════════════════════════════════╝
 #
 # Запуск на роутере одной командой:
-#   wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
 #
 # Требования:
 #   • Keenetic с установленным Entware (/opt)
@@ -14,7 +14,7 @@
 
 set -e
 
-GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-vpn/main"
+GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 OPT="/opt"
 XRAY_CONF="/opt/etc/xray"
 BIN="/opt/bin"
@@ -260,7 +260,7 @@ CONFIG
 
   # kox.conf
   cat > "${XRAY_CONF}/kox.conf" << KOXCONF
-# KOX VPN — параметры сервера
+# KOX Shield — параметры сервера
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 KOX_SERVER="${VLESS_HOST}"
 KOX_PORT="${VLESS_PORT}"
@@ -351,7 +351,7 @@ start_xray() {
 show_result() {
   printf "\n"
   sep
-  printf " ${G}✓${N}  ${W}KOX VPN установлен!${N}\n"
+  printf " ${G}✓${N}  ${W}KOX Shield установлен!${N}\n"
   sep
   printf "\n"
   printf "  Сервер:  ${W}%s:%s${N}\n" "$VLESS_HOST" "$VLESS_PORT"

@@ -9,11 +9,11 @@
   ╚═╝  ╚═╝   ╚═════╝  ╚═╝  ╚═╝
 ```
 
-**VLESS split-tunnel VPN for Keenetic routers**
+**KOX Shield — smart traffic encryption for Keenetic routers**
 
 [![Telegram](https://img.shields.io/badge/Telegram-Channel-blue?logo=telegram)](https://t.me/PrivateProxyKox)
 [![Bot](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://t.me/kox_nonamenebula_bot)
-[![Site](https://img.shields.io/badge/🌐-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
+[![Site](https://img.shields.io/badge/🛡️-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 🌐 **Language / Язык:** [Русский](README.md) · **English**
@@ -22,18 +22,18 @@
 
 ---
 
-## 🚀 What is KOX VPN?
+## 🚀 What is KOX Shield?
 
-**KOX VPN** is a fully automated VLESS/Reality tunnel setup for Keenetic routers. Traffic to blocked sites goes through the VPN; everything else goes directly through your ISP. No manual configuration needed.
+**KOX Shield** is a fully automated VLESS/Reality tunnel setup for Keenetic routers. Traffic to selected sites goes through the VPN; everything else goes directly through your ISP. No manual configuration needed.
 
-> ✅ **Migrating from Kvass?** The installer automatically detects and cleanly removes Kvass, Shadowsocks, and sing-box before setting up KOX VPN — just answer "yes" when prompted.
+> ✅ **Migrating from Kvass?** The installer automatically detects and cleanly removes Kvass, Shadowsocks, and sing-box before setting up KOX Shield — just answer "yes" when prompted.
 
 ### ✨ Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔀 **Split-tunnel** | Only blocked sites through VPN, everything else direct |
-| ⚡ **VLESS + Reality** | Modern protocol — undetectable by ISP/DPI |
+| 🔀 **Умное шифрование** | Only selected sites through VPN, everything else direct |
+| ⚡ **VLESS + Reality** | Modern protocol — invisible to ISP and DPI |
 | 📱 **Telegram Bot** | Full router management from Telegram |
 | 💻 **KOX Console** | Router CLI — `kox status`, `kox add`, `kox list`... |
 | 🔄 **Auto-update** | Daily subscription parameter refresh |
@@ -43,7 +43,7 @@
 
 ## 🔑 Getting a VLESS Server
 
-### Option 1: KOX VPN Subscription (ready in 1 minute)
+### Option 1: KOX Shield Subscription (ready in 1 minute)
 
 Register at **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — get a ready VLESS subscription with multiple servers, support, and auto-update.
 
@@ -105,7 +105,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Connect to your router via SSH (port 222) and run one command:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
 ```
 
 > **Requirements:** Keenetic router with [Entware](https://help.keenetic.com/hc/en-us/articles/360021214160) installed
@@ -121,7 +121,7 @@ The script will:
 ### Method 2: From Mac / Linux PC (advanced)
 
 ```bash
-curl -O https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/xraykit.sh
+curl -O https://raw.githubusercontent.com/nonamenebula/kox-shield/main/xraykit.sh
 chmod +x xraykit.sh
 ./xraykit.sh
 ```
@@ -132,13 +132,13 @@ Additionally sets up the Telegram Bot and runs a final tunnel verification.
 
 ## 🔄 Migrating from Kvass
 
-KOX VPN is a full replacement for Kvass with a more modern protocol (VLESS/Reality instead of Shadowsocks).
+KOX Shield is a full replacement for Kvass with a more modern protocol (VLESS/Reality instead of Shadowsocks).
 
 The installer handles migration automatically:
 1. Detects installed Kvass, Shadowsocks, or sing-box
 2. **Asks for confirmation** before removing anything
 3. Cleanly stops services and removes configs
-4. Installs KOX VPN with your VLESS subscription
+4. Installs KOX Shield with your VLESS subscription
 
 Your router settings and other configurations are **not affected**.
 
@@ -212,7 +212,7 @@ Manage your router from Telegram without SSH:
 
 ```
   ┌─────────────────────────────────────┐
-  │  🔑 KOX VPN — Router Management    │
+  │  🔑 KOX Shield — Router Management    │
   │  Choose action:                     │
   ├──────────────┬──────────────────────┤
   │ 📊 Status   │ 🌐 Server            │
@@ -274,18 +274,18 @@ kox add my-blocked-site.com
 
 ---
 
-## 🆚 KOX VPN vs Kvass
+## 🆚 KOX Shield vs Kvass
 
-| | KOX VPN | Kvass |
+| | KOX Shield | Kvass |
 |--|---------|-------|
 | Protocol | VLESS + Reality | Shadowsocks |
-| DPI bypass | ✅ Undetectable | ⚠️ Partial |
+| DPI protection | ✅ Invisible to ISP | ⚠️ Partial |
 | Install from router | ✅ `wget \| sh` | ✅ |
 | Install from PC | ✅ `xraykit.sh` | ✅ |
 | CLI console | ✅ `kox` | ✅ |
 | Telegram Bot | ✅ Built-in | ❌ |
 | Colored bot buttons | ✅ Bot API 9.4 | — |
-| Split-tunnel | ✅ Domain + IP | ✅ |
+| Умное шифрование | ✅ Domain + IP | ✅ |
 | Auto-update | ✅ | ✅ |
 | Migrate from Kvass | ✅ Automatic | — |
 | Open source | ✅ | ✅ |

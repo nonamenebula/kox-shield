@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX VPN Telegram Bot Daemon v3
+# KOX Shield Telegram Bot Daemon v3
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
@@ -174,7 +174,7 @@ h_status() {
   VPN_ST=$([ -f /tmp/kox-vpn-off ] && echo "❌ ВЫКЛЮЧЕН" || echo "✅ ВКЛЮЧЕН")
   SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   CONN=$(netstat -tn 2>/dev/null | grep -c :10808 2>/dev/null || echo 0)
-  update_menu "$CHAT" "📊 <b>Статус KOX VPN</b>
+  update_menu "$CHAT" "📊 <b>Статус KOX Shield</b>
 
 Xray:         ${XRAY_OK}
 Порт 10808:   ${PORT_OK}
@@ -403,7 +403,7 @@ h_add_ip() {
 
 h_help() {
   local CHAT="$1"
-  update_menu "$CHAT" "❓ <b>KOX VPN Bot — справка</b>
+  update_menu "$CHAT" "❓ <b>KOX Shield Bot — справка</b>
 
 <b>Меню кнопок:</b>
 📊 Статус — Xray, iptables, VPN
@@ -490,7 +490,7 @@ while true; do
       # Delete user message for clean chat
       [ -n "$USER_MSG_ID" ] && delete_msg "$CHAT_ID" "$USER_MSG_ID"
       sticky_clear
-      update_menu "$CHAT_ID" "⚠️ <b>KOX VPN Bot не настроен</b>
+      update_menu "$CHAT_ID" "⚠️ <b>KOX Shield Bot не настроен</b>
 
 Ваш Telegram ID: <code>${FROM_ID}</code>
 
@@ -540,7 +540,7 @@ while true; do
       # Navigation
       /start|/menu|menu)
         update_menu "$CHAT_ID" \
-          "🔑 <b>KOX VPN — управление роутером</b>
+          "🔑 <b>KOX Shield — управление роутером</b>
 
 Выберите действие:" "$(main_keyboard)"
         ;;
@@ -557,7 +557,7 @@ while true; do
         update_menu "$CHAT_ID" \
           "⚠️ <b>Выключить VPN?</b>
 
-Трафик пойдёт напрямую, заблокированные сайты станут недоступны." \
+Трафик пойдёт напрямую, сайты с умным шифрованием станут недоступны." \
           "$(confirm_keyboard off)"
         ;;
       do_off)            h_off     "$CHAT_ID" ;;
@@ -644,7 +644,7 @@ VPN прервётся примерно на 2 секунды." \
       menu)
         rm -f "$WAIT_FILE"
         update_menu "$CHAT_ID" \
-          "🔑 <b>KOX VPN — управление роутером</b>
+          "🔑 <b>KOX Shield — управление роутером</b>
 
 Выберите действие:" "$(main_keyboard)"
         ;;

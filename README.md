@@ -9,11 +9,11 @@
   ╚═╝  ╚═╝   ╚═════╝  ╚═╝  ╚═╝
 ```
 
-**VLESS split-tunnel VPN для роутеров Keenetic**
+**KOX Shield — умное шифрование трафика для роутеров Keenetic**
 
 [![Telegram](https://img.shields.io/badge/Telegram-Канал-blue?logo=telegram)](https://t.me/PrivateProxyKox)
 [![Bot](https://img.shields.io/badge/Telegram-Бот-blue?logo=telegram)](https://t.me/kox_nonamenebula_bot)
-[![Site](https://img.shields.io/badge/🌐-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
+[![Site](https://img.shields.io/badge/🛡️-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
 [![License](https://img.shields.io/badge/Лицензия-MIT-green)](LICENSE)
 
 🌐 **Язык / Language:** **Русский** · [English](README.en.md)
@@ -22,18 +22,18 @@
 
 ---
 
-## 🚀 Что такое KOX VPN?
+## 🚀 Что такое KOX Shield?
 
-**KOX VPN** — полностью автоматизированная установка VLESS/Reality туннеля на роутеры Keenetic. Весь трафик к заблокированным сайтам идёт через VPN, остальной — напрямую через ваш интернет-провайдер. Никаких ручных настроек.
+**KOX Shield** — полностью автоматизированная установка VLESS/Reality туннеля на роутеры Keenetic. Весь трафик к сайтам с умным шифрованием идёт через VPN, остальной — напрямую через ваш интернет-провайдер. Никаких ручных настроек.
 
-> ✅ **Переходите с Kvass?** Установщик автоматически обнаруживает и чисто удаляет Kvass, Shadowsocks и sing-box перед настройкой KOX VPN — нужно только подтвердить удаление.
+> ✅ **Переходите с Kvass?** Установщик автоматически обнаруживает и чисто удаляет Kvass, Shadowsocks и sing-box перед настройкой KOX Shield — нужно только подтвердить удаление.
 
 ### ✨ Ключевые возможности
 
 | Функция | Описание |
 |---------|----------|
-| 🔀 **Split-tunnel** | Только заблокированные сайты через VPN, всё остальное напрямую |
-| ⚡ **VLESS + Reality** | Современный протокол — не определяется провайдером/DPI |
+| 🔀 **Умное шифрование** | Только сайты с умным шифрованием через VPN, всё остальное напрямую |
+| ⚡ **VLESS + Reality** | Современный протокол — невидим для провайдера и DPI/DPI |
 | 📱 **Telegram Bot** | Полное управление роутером прямо из Telegram |
 | 💻 **KOX Console** | Удобный CLI на роутере — `kox status`, `kox add`, `kox list`... |
 | 🔄 **Авто-обновление** | Ежедневное обновление параметров из подписки |
@@ -43,7 +43,7 @@
 
 ## 🔑 Откуда взять VLESS сервер?
 
-### Вариант 1: Подписка KOX VPN (готово за 1 минуту)
+### Вариант 1: Подписка KOX Shield (готово за 1 минуту)
 
 Зарегистрируйтесь на **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — получите готовую VLESS-подписку с несколькими серверами, поддержкой и автообновлением.
 
@@ -105,7 +105,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Подключитесь к роутеру по SSH (порт 222) и выполните одну команду:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
 ```
 
 > **Требования:** Keenetic с установленным [Entware](https://help.keenetic.com/hc/ru/articles/360021214160)
@@ -121,7 +121,7 @@ wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/install.sh
 ### Способ 2: С компьютера Mac/Linux (расширенный)
 
 ```bash
-curl -O https://raw.githubusercontent.com/nonamenebula/kox-vpn/main/xraykit.sh
+curl -O https://raw.githubusercontent.com/nonamenebula/kox-shield/main/xraykit.sh
 chmod +x xraykit.sh
 ./xraykit.sh
 ```
@@ -130,15 +130,15 @@ chmod +x xraykit.sh
 
 ---
 
-## 🔄 Миграция с Kvass на KOX VPN
+## 🔄 Миграция с Kvass на KOX Shield
 
-KOX VPN — полноценная замена Kvass с более современным протоколом (VLESS/Reality вместо Shadowsocks).
+KOX Shield — полноценная замена Kvass с более современным протоколом (VLESS/Reality вместо Shadowsocks).
 
 Установщик обрабатывает миграцию автоматически:
 1. Обнаруживает установленные Kvass, Shadowsocks или sing-box
 2. **Спрашивает подтверждение** перед удалением
 3. Чисто останавливает сервисы и удаляет конфиги
-4. Устанавливает KOX VPN с вашей VLESS-подпиской
+4. Устанавливает KOX Shield с вашей VLESS-подпиской
 
 Настройки роутера и другие конфигурации **не затрагиваются**.
 
@@ -212,7 +212,7 @@ kox admin show          # Показать текущего администра
 
 ```
   ┌─────────────────────────────────────┐
-  │  🔑 KOX VPN — управление роутером  │
+  │  🔑 KOX Shield — управление роутером  │
   │  Выберите действие:                 │
   ├──────────────┬──────────────────────┤
   │ 📊 Статус   │ 🌐 Сервер            │
@@ -274,18 +274,18 @@ kox add my-site.com
 
 ---
 
-## 🆚 KOX VPN vs Kvass
+## 🆚 KOX Shield vs Kvass
 
-| | KOX VPN | Kvass |
+| | KOX Shield | Kvass |
 |--|---------|-------|
 | Протокол | VLESS + Reality | Shadowsocks |
-| Обход DPI | ✅ Не определяется | ⚠️ Частично |
+| Защита от DPI | ✅ Невидим для провайдера | ⚠️ Частично |
 | Установка с роутера | ✅ `wget \| sh` | ✅ |
 | Установка с ПК | ✅ `xraykit.sh` | ✅ |
 | CLI консоль | ✅ `kox` | ✅ |
 | Telegram Bot | ✅ Встроен | ❌ |
 | Цветные кнопки бота | ✅ Bot API 9.4 | — |
-| Split-tunnel | ✅ Домены + IP | ✅ |
+| Умное шифрование | ✅ Домены + IP | ✅ |
 | Авто-обновление | ✅ | ✅ |
 | Миграция с Kvass | ✅ Автоматически | — |
 | Open source | ✅ | ✅ |
@@ -357,7 +357,7 @@ tail -20 /opt/var/log/kox-bot.log
 
 **Q: Конфликт с Kvass — как мигрировать?**
 
-Запустите установщик — он обнаружит Kvass и предложит его удалить перед настройкой KOX VPN. Для ручной установки используйте `xraykit.sh` с компьютера.
+Запустите установщик — он обнаружит Kvass и предложит его удалить перед настройкой KOX Shield. Для ручной установки используйте `xraykit.sh` с компьютера.
 
 ---
 

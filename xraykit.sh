@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║   KOX VPN — VLESS Installer for Keenetic                       ║
+# ║   KOX Shield — VLESS Installer for Keenetic                       ║
 # ║   kox.nonamenebula.ru                                           ║
 # ╚══════════════════════════════════════════════════════════════════╝
 #
 # Запуск: chmod +x xraykit.sh && ./xraykit.sh
 # Сайт:   https://kox.nonamenebula.ru
-# Автор:  KOX VPN
+# Автор:  KOX Shield
 
 # ── Цвета и символы ─────────────────────────────────────────────────
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
@@ -23,7 +23,7 @@ kox()  { echo -e " ${M}★${N}  $*"; }
 die()  { echo -e "\n ${R}ОШИБКА:${N} $*\n"; exit 1; }
 sep()  { echo -e "  ${B}────────────────────────────────────────────────${N}"; }
 
-# ── Баннер KOX VPN ──────────────────────────────────────────────────
+# ── Баннер KOX Shield ──────────────────────────────────────────────────
 banner() {
 clear
 echo ""
@@ -36,7 +36,7 @@ echo '  ██║  ██╗╚██████╔╝██╔╝ ██╗   
 echo '  ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝     ╚═══╝  ╚═╝     ╚═╝  ╚═══╝'
 echo -e "${N}"
   echo -e "  ${W}VLESS-туннель с раздельным трафиком для Keenetic${N}"
-  echo -e "  ${M}★${N} ${C}https://kox.nonamenebula.ru${N}  ${M}★${N}  Автор: KOX VPN"
+  echo -e "  ${M}★${N} ${C}https://kox.nonamenebula.ru${N}  ${M}★${N}  Автор: KOX Shield"
   echo -e "  ${M}★${N} Telegram: ${C}@PrivateProxyKox${N}  Бот: ${C}@kox_nonamenebula_bot${N}"
   sep
   echo ""
@@ -86,7 +86,7 @@ stop_http_server() {
   HTTP_PID=""
 }
 
-trap 'stop_http_server; echo -e "\n${Y}[KOX VPN] Прервано.${N}"; exit 1' INT TERM
+trap 'stop_http_server; echo -e "\n${Y}[KOX Shield] Прервано.${N}"; exit 1' INT TERM
 
 # ══════════════════════════════════════════════════════════════════════
 # ШАГ 0: Зависимости
@@ -105,7 +105,7 @@ phase_deps() {
       command -v brew &>/dev/null || die "Homebrew не найден. Установите sshpass вручную."
       brew install hudochenkov/sshpass/sshpass >/dev/null 2>&1 && ok "sshpass установлен" || die "Ошибка установки sshpass"
     else
-      die "sshpass обязателен для KOX VPN Installer"
+      die "sshpass обязателен для KOX Shield Installer"
     fi
   else
     ok "sshpass найден"
@@ -124,7 +124,7 @@ phase_deps() {
 phase_mode_select() {
   echo ""
   echo -e "  ${B}╔══════════════════════════════════════════════╗${N}"
-  echo -e "  ${B}║${N}  ${W}Выберите режим установки KOX VPN:${N}          ${B}║${N}"
+  echo -e "  ${B}║${N}  ${W}Выберите режим установки KOX Shield:${N}          ${B}║${N}"
   echo -e "  ${B}╠══════════════════════════════════════════════╣${N}"
   echo -e "  ${B}║${N}  ${G}1${N}  Чистая установка (роутер без VPN)        ${B}║${N}"
   echo -e "  ${B}║${N}  ${Y}2${N}  Замена/обновление (Kvass, другой VPN)    ${B}║${N}"
@@ -148,7 +148,7 @@ phase_mode_select() {
 # ШАГ 1: Подписка + выбор сервера
 # ══════════════════════════════════════════════════════════════════════
 phase_subscription() {
-  step "1/10" "Подписка KOX VPN / VLESS"
+  step "1/10" "Подписка KOX Shield / VLESS"
   echo ""
   kox "Ссылку на подписку получите на ${C}https://kox.nonamenebula.ru${N}"
   echo ""
@@ -179,7 +179,7 @@ phase_subscription() {
   # ── Выбор сервера если их несколько ───────────────────────────────
   if [ "$URI_COUNT" -gt 1 ]; then
     echo ""
-    echo -e "  ${W}Доступные серверы KOX VPN:${N}"
+    echo -e "  ${W}Доступные серверы KOX Shield:${N}"
     sep
     I=1
     while IFS= read -r URI; do
@@ -229,7 +229,7 @@ phase_subscription() {
   done
 
   echo ""
-  echo -e "  ${W}Параметры KOX VPN:${N}"
+  echo -e "  ${W}Параметры KOX Shield:${N}"
   echo -e "  ${M}★${N} Сервер:    ${G}${VLESS_HOST}:${VLESS_PORT}${N}"
   echo -e "  ${M}★${N} UUID:      ${G}${VLESS_UUID}${N}"
   echo -e "  ${M}★${N} SNI:       ${G}${VLESS_SNI}${N}"
@@ -241,7 +241,7 @@ phase_subscription() {
   [[ "${REPLY,,}" == "n" ]] && die "Отменено. Проверьте ссылку на kox.nonamenebula.ru"
 
   VLESS_IP=$(python3 -c "import socket; print(socket.gethostbyname('$VLESS_HOST'))" 2>/dev/null || echo "")
-  [ -n "$VLESS_IP" ] && info "IP KOX VPN сервера: ${W}$VLESS_IP${N}"
+  [ -n "$VLESS_IP" ] && info "IP KOX Shield сервера: ${W}$VLESS_IP${N}"
 }
 
 # ══════════════════════════════════════════════════════════════════════
@@ -309,7 +309,7 @@ phase_connect() {
   if ! router "ls /opt/bin/opkg" >/dev/null 2>&1; then
     fail "Entware (opkg) не найден!"
     echo ""
-    echo -e "  ${Y}Для KOX VPN требуется Entware:${N}"
+    echo -e "  ${Y}Для KOX Shield требуется Entware:${N}"
     echo "    1. Вставьте USB-флешку (EXT4/NTFS) в роутер"
     echo "    2. Откройте http://$ROUTER_IP → Приложения → Entware → Установить"
     echo "    3. Перезапустите этот скрипт"
@@ -359,7 +359,7 @@ phase_detect() {
     read -r REPLY
     [[ "${REPLY,,}" == "n" ]] && die "Отменено"
   else
-    kox "Конфликтующего ПО нет — чистая установка KOX VPN"
+    kox "Конфликтующего ПО нет — чистая установка KOX Shield"
   fi
 }
 
@@ -367,7 +367,7 @@ phase_detect() {
 # ШАГ 5: Очистка
 # ══════════════════════════════════════════════════════════════════════
 phase_cleanup() {
-  step "5/10" "Очистка перед KOX VPN"
+  step "5/10" "Очистка перед KOX Shield"
   echo ""
 
   if ${FOUND_KVAS:-false}; then
@@ -408,7 +408,7 @@ phase_cleanup() {
 # ШАГ 6: Установка Xray + geofiles
 # ══════════════════════════════════════════════════════════════════════
 phase_install() {
-  step "6/10" "Установка Xray (KOX VPN engine)"
+  step "6/10" "Установка Xray (KOX Shield engine)"
   echo ""
 
   if $ONLY_CONFIG; then
@@ -450,10 +450,10 @@ phase_install() {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-# ШАГ 7: config.json для KOX VPN (с маркером для kox CLI)
+# ШАГ 7: config.json для KOX Shield (с маркером для kox CLI)
 # ══════════════════════════════════════════════════════════════════════
 phase_configure() {
-  step "7/10" "Конфигурация KOX VPN"
+  step "7/10" "Конфигурация KOX Shield"
   echo ""
 
   VLESS_IP_RULE=""
@@ -593,7 +593,7 @@ CONF
 
   # Сохранить параметры сервера для kox CLI
   cat > /tmp/kox.conf << KOXCONF
-# KOX VPN — сохранённые параметры
+# KOX Shield — параметры сервера
 # https://kox.nonamenebula.ru/register | t.me/PrivateProxyKox
 KOX_SERVER="${VLESS_HOST}"
 KOX_PORT="${VLESS_PORT}"
@@ -621,7 +621,7 @@ KOXCONF
 
   info "Проверяю конфиг..."
   TEST_OUT=$(router "/opt/sbin/xray run -test -c /opt/etc/xray/config.json 2>&1" || echo "FAIL")
-  echo "$TEST_OUT" | grep -q "Configuration OK" && ok "Конфиг KOX VPN — ${G}Configuration OK${N}" || \
+  echo "$TEST_OUT" | grep -q "Configuration OK" && ok "Конфиг KOX Shield — ${G}Configuration OK${N}" || \
     { echo "$TEST_OUT" | grep -qi "error\|fail" && { fail "Ошибка: $TEST_OUT"; die "config.json невалиден"; } || ok "Конфиг принят"; }
 }
 
@@ -629,12 +629,12 @@ KOXCONF
 # ШАГ 8: iptables
 # ══════════════════════════════════════════════════════════════════════
 phase_iptables() {
-  step "8/10" "Правила iptables — KOX VPN прозрачный прокси"
+  step "8/10" "Правила iptables — KOX Shield прозрачный прокси"
   echo ""
 
   cat > /tmp/99-kox-nat.sh << 'NATSCRIPT'
 #!/bin/sh
-# KOX VPN — LAN трафик → Xray 10808 | kox.nonamenebula.ru
+# KOX Shield — LAN трафик → Xray 10808 | kox.nonamenebula.ru
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin; export PATH
 apply_v4() {
   iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null
@@ -671,7 +671,7 @@ NATSCRIPT
 
   cat > /tmp/99-kox-wan.sh << 'WANSCRIPT'
 #!/bin/sh
-# KOX VPN — применить NAT после WAN | kox.nonamenebula.ru
+# KOX Shield — применить NAT после WAN | kox.nonamenebula.ru
 [ "${1:-}" = "start" ] || exit 0; sleep 3
 sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh 2>/dev/null; exit 0
 WANSCRIPT
@@ -698,15 +698,15 @@ WANSCRIPT
 # ШАГ 9: Установка kox CLI на роутер
 # ══════════════════════════════════════════════════════════════════════
 phase_install_kox_cli() {
-  step "9/10" "Установка KOX VPN CLI на роутер (/opt/bin/kox)"
+  step "9/10" "Установка KOX Shield CLI на роутер (/opt/bin/kox)"
   echo ""
   info "Генерирую kox CLI..."
 
   # ── Генерируем скрипт /opt/bin/kox ─────────────────────────────────
   cat > /tmp/kox-cli.sh << 'KOXCLI'
-#!#!/bin/sh
-# KOX VPN Management Console
-# https://kox.nonamenebula.ru/register | t.me/PrivateProxyKox
+#!/bin/sh
+# KOX Shield Management Console
+# https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -749,7 +749,7 @@ kox_banner() {
 }
 
 kox_help() {
-  printf " ${W}Команды KOX VPN:${N}\n\n"
+  printf " ${W}Команды KOX Shield:${N}\n\n"
   printf "  ${G}kox status${N}           — статус Xray и туннеля\n"
   printf "  ${G}kox on${N}               — включить VPN (iptables)\n"
   printf "  ${G}kox off${N}              — выключить VPN (iptables)\n"
@@ -784,7 +784,7 @@ load_conf() {
 
 kox_status() {
   kox_banner
-  info "Проверка статуса KOX VPN..."
+  info "Проверка статуса KOX Shield..."
   sep
 
   # Xray process
@@ -1275,7 +1275,7 @@ KOXCLI
 # ШАГ 9.5: Telegram Bot (опционально)
 # ══════════════════════════════════════════════════════════════════════
 phase_telegram_bot() {
-  step "9.5/10" "Telegram Bot KOX VPN (опционально)"
+  step "9.5/10" "Telegram Bot KOX Shield (опционально)"
   echo ""
   echo -e "  ${M}★${N} Уникальная функция: управление роутером прямо из Telegram!"
   echo -e "  ${M}★${N} Канал: ${C}https://t.me/PrivateProxyKox${N}"
@@ -1354,8 +1354,8 @@ phase_telegram_bot() {
   info "Создаю Telegram бот скрипт..."
 
   cat > /tmp/kox-bot.sh << 'BOTSCRIPT'
-##!/bin/sh
-# KOX VPN Telegram Bot Daemon v3
+#!/bin/sh
+# KOX Shield Telegram Bot Daemon v3
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
@@ -1530,7 +1530,7 @@ h_status() {
   VPN_ST=$([ -f /tmp/kox-vpn-off ] && echo "❌ ВЫКЛЮЧЕН" || echo "✅ ВКЛЮЧЕН")
   SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   CONN=$(netstat -tn 2>/dev/null | grep -c :10808 2>/dev/null || echo 0)
-  update_menu "$CHAT" "📊 <b>Статус KOX VPN</b>
+  update_menu "$CHAT" "📊 <b>Статус KOX Shield</b>
 
 Xray:         ${XRAY_OK}
 Порт 10808:   ${PORT_OK}
@@ -1759,7 +1759,7 @@ h_add_ip() {
 
 h_help() {
   local CHAT="$1"
-  update_menu "$CHAT" "❓ <b>KOX VPN Bot — справка</b>
+  update_menu "$CHAT" "❓ <b>KOX Shield Bot — справка</b>
 
 <b>Меню кнопок:</b>
 📊 Статус — Xray, iptables, VPN
@@ -1846,7 +1846,7 @@ while true; do
       # Delete user message for clean chat
       [ -n "$USER_MSG_ID" ] && delete_msg "$CHAT_ID" "$USER_MSG_ID"
       sticky_clear
-      update_menu "$CHAT_ID" "⚠️ <b>KOX VPN Bot не настроен</b>
+      update_menu "$CHAT_ID" "⚠️ <b>KOX Shield Bot не настроен</b>
 
 Ваш Telegram ID: <code>${FROM_ID}</code>
 
@@ -1896,7 +1896,7 @@ while true; do
       # Navigation
       /start|/menu|menu)
         update_menu "$CHAT_ID" \
-          "🔑 <b>KOX VPN — управление роутером</b>
+          "🔑 <b>KOX Shield — управление роутером</b>
 
 Выберите действие:" "$(main_keyboard)"
         ;;
@@ -1913,7 +1913,7 @@ while true; do
         update_menu "$CHAT_ID" \
           "⚠️ <b>Выключить VPN?</b>
 
-Трафик пойдёт напрямую, заблокированные сайты станут недоступны." \
+Трафик пойдёт напрямую, сайты с умным шифрованием станут недоступны." \
           "$(confirm_keyboard off)"
         ;;
       do_off)            h_off     "$CHAT_ID" ;;
@@ -2000,7 +2000,7 @@ VPN прервётся примерно на 2 секунды." \
       menu)
         rm -f "$WAIT_FILE"
         update_menu "$CHAT_ID" \
-          "🔑 <b>KOX VPN — управление роутером</b>
+          "🔑 <b>KOX Shield — управление роутером</b>
 
 Выберите действие:" "$(main_keyboard)"
         ;;
@@ -2017,8 +2017,8 @@ BOTSCRIPT
 
   # ── Создать init.d сервис для бота ──────────────────────────────
   cat > /tmp/S90kox-bot.sh << 'BOTSVC'
-##!/bin/sh
-# KOX VPN Telegram Bot — Entware init.d service
+#!/bin/sh
+# KOX Shield Telegram Bot — Entware init.d service
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
@@ -2122,7 +2122,7 @@ BOTSVC
 # ШАГ 10: Запуск и финальная проверка
 # ══════════════════════════════════════════════════════════════════════
 phase_start_and_verify() {
-  step "10/10" "Запуск и проверка KOX VPN"
+  step "10/10" "Запуск и проверка KOX Shield"
   echo ""
 
   router "sed -i 's/^ENABLED=no/ENABLED=yes/' /opt/etc/init.d/S24xray 2>/dev/null || true"
@@ -2141,7 +2141,7 @@ phase_start_and_verify() {
 
   if [ -n "${VLESS_IP:-}" ]; then
     TCP=$(router "nc -z -w 5 $VLESS_HOST $VLESS_PORT 2>/dev/null && echo OK || echo FAIL" || echo "FAIL")
-    [[ "$TCP" == *"OK"* ]] && ok "3/4  KOX VPN сервер ${VLESS_HOST}:${VLESS_PORT} — доступен" || fail "3/4  Сервер недоступен с роутера"
+    [[ "$TCP" == *"OK"* ]] && ok "3/4  KOX Shield сервер ${VLESS_HOST}:${VLESS_PORT} — доступен" || fail "3/4  Сервер недоступен с роутера"
   else
     info "3/4  IP сервера неизвестен — пропускаю"
   fi
@@ -2149,7 +2149,7 @@ phase_start_and_verify() {
   sleep 3
   LOG=$(router "tail -15 /opt/var/log/kox-err.log 2>/dev/null || echo NOLOG")
   if echo "$LOG" | grep -q "tunneling request"; then
-    ok "4/4  KOX VPN активен — туннелированный трафик обнаружен ✓"
+    ok "4/4  KOX Shield активен — туннелированный трафик обнаружен ✓"
   elif echo "$LOG" | grep -q "NOLOG"; then
     warn "4/4  Лог пуст — откройте youtube.com в браузере для теста"
   elif echo "$LOG" | grep -qi "error\|failed"; then
@@ -2168,7 +2168,7 @@ show_summary() {
   echo -e "${B}"
   echo '  ╔══════════════════════════════════════════════════════╗'
   echo '  ║                                                      ║'
-  echo '  ║   ★  KOX VPN успешно установлен!  ★                 ║'
+  echo '  ║   ★  KOX Shield успешно установлен!  ★                 ║'
   echo '  ║      kox.nonamenebula.ru                             ║'
   echo '  ╚══════════════════════════════════════════════════════╝'
   echo -e "${N}"
@@ -2183,7 +2183,7 @@ show_summary() {
   echo -e "  2. YouTube, Instagram, Telegram — работают"
   echo -e "  3. gosuslugi.ru, sber.ru — идут через домашний IP"
   sep
-  echo -e "  ${W}Управление KOX VPN (SSH на роутер):${N}"
+  echo -e "  ${W}Управление KOX Shield (SSH на роутер):${N}"
   echo -e "  ${C}ssh root@$ROUTER_IP -p ${ROUTER_SSH_PORT}${N}"
   echo ""
   echo -e "  ${G}kox${N}                      — показать все команды"

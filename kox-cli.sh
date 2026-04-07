@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX VPN Management Console
+# KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
 CONF="/opt/etc/xray/config.json"
@@ -43,7 +43,7 @@ kox_banner() {
 }
 
 kox_help() {
-  printf " ${W}Команды KOX VPN:${N}\n\n"
+  printf " ${W}Команды KOX Shield:${N}\n\n"
   printf "  ${G}kox status${N}           — статус Xray и туннеля\n"
   printf "  ${G}kox on${N}               — включить VPN (iptables)\n"
   printf "  ${G}kox off${N}              — выключить VPN (iptables)\n"
@@ -78,7 +78,7 @@ load_conf() {
 
 kox_status() {
   kox_banner
-  info "Проверка статуса KOX VPN..."
+  info "Проверка статуса KOX Shield..."
   sep
 
   # Xray process

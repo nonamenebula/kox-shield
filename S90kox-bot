@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX VPN Telegram Bot — Entware init.d service
+# KOX Shield Telegram Bot — Entware init.d service
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
