@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.04.18"
+KOX_VERSION="2026.04.19"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -165,26 +165,44 @@ setup_commands() {
 
 # ── Keyboard layouts (Bot API 9.4 colored buttons) ────────────────────────────
 main_keyboard() {
-  # style: "primary"=blue, "success"=green, "danger"=red
   printf '%s' '{
     "inline_keyboard":[
-      [{"text":"📊 Статус","callback_data":"status","style":"primary"},
+      [{"text":"📊 Статус","callback_data":"status"},
        {"text":"🌐 Сервер","callback_data":"server"}],
-      [{"text":"✅ Вкл VPN","callback_data":"do_on","style":"success"},
-       {"text":"❌ Выкл VPN","callback_data":"confirm_off","style":"danger"}],
-      [{"text":"🔄 Рестарт Xray","callback_data":"confirm_restart","style":"danger"},
-       {"text":"🔧 Тест конфига","callback_data":"test_config","style":"primary"}],
-      [{"text":"📋 Домены","callback_data":"list"},
+      [{"text":"✅ Вкл VPN","callback_data":"do_on"},
+       {"text":"❌ Выкл VPN","callback_data":"confirm_off"}],
+      [{"text":"🔄 Рестарт Xray","callback_data":"confirm_restart"},
+       {"text":"🔧 Тест конфига","callback_data":"test_config"}],
+      [{"text":"📋 Домены и IP  →","callback_data":"domains_menu"},
+       {"text":"🛠 Инструменты  →","callback_data":"tools_menu"}],
+      [{"text":"⚙️ Настройки","callback_data":"settings"},
+       {"text":"❓ Помощь","callback_data":"help"}]
+    ]
+  }'
+}
+
+domains_keyboard() {
+  printf '%s' '{
+    "inline_keyboard":[
+      [{"text":"📋 Список доменов","callback_data":"list"},
        {"text":"🔢 IP-список","callback_data":"list_ip"}],
-      [{"text":"➕ Добавить домен","callback_data":"prompt_add","style":"success"},
-       {"text":"➖ Удалить домен","callback_data":"prompt_del","style":"danger"}],
+      [{"text":"➕ Добавить домен","callback_data":"prompt_add"},
+       {"text":"➖ Удалить домен","callback_data":"prompt_del"}],
       [{"text":"🔍 Проверить домен","callback_data":"prompt_check"},
-       {"text":"➕ Добавить IP","callback_data":"prompt_add_ip","style":"success"}],
+       {"text":"➕ Добавить IP","callback_data":"prompt_add_ip"}],
+      [{"text":"◀️ Главное меню","callback_data":"menu"}]
+    ]
+  }'
+}
+
+tools_keyboard() {
+  printf '%s' '{
+    "inline_keyboard":[
       [{"text":"📝 Логи Xray","callback_data":"log"},
        {"text":"📈 Трафик","callback_data":"stats"}],
-      [{"text":"💾 Бэкап","callback_data":"do_backup","style":"primary"},
-       {"text":"🗑️ Очистить логи","callback_data":"confirm_clearlog","style":"danger"}],
-      [{"text":"❓ Помощь","callback_data":"help"}]
+      [{"text":"💾 Бэкап","callback_data":"do_backup"},
+       {"text":"🗑️ Очистить логи","callback_data":"confirm_clearlog"}],
+      [{"text":"◀️ Главное меню","callback_data":"menu"}]
     ]
   }'
 }
@@ -853,8 +871,7 @@ ${ICON_NLST} <b>Уведомления: Списки</b>: ${NTFY_LST}"
       [{"text":("📋 Автообн. списков: "+$il),"callback_data":"toggle_auto_lst"}],
       [{"text":($inu+" уведомл. KOX"),"callback_data":"toggle_notify_upg"},
        {"text":($inl+" уведомл. списков"),"callback_data":"toggle_notify_lst"}],
-      [{"text":"🧹 Удалить старый VPN (KVAS/SOCKS)","callback_data":"clean_legacy"}],
-      [{"text":"◀️ Назад","callback_data":"menu"}]
+      [{"text":"◀️ Главное меню","callback_data":"menu"}]
     ]}')
 
   update_menu "$CHAT" "$MSG" "$KBD"
@@ -1153,6 +1170,12 @@ VPN прервётся примерно на 2 секунды." \
           printf '%s' "check|${CHAT_ID}" > "$WAIT_FILE"
           update_menu "$CHAT_ID" "🔍 Введите домен для проверки:" "$(back_keyboard)"
         fi ;;
+
+      # Submenus
+      domains_menu)
+        update_menu "$CHAT_ID" "📋 <b>Управление доменами и IP</b>" "$(domains_keyboard)" ;;
+      tools_menu)
+        update_menu "$CHAT_ID" "🛠 <b>Инструменты</b>" "$(tools_keyboard)" ;;
 
       # Settings screen
       /settings|settings) h_settings "$CHAT_ID" ;;
