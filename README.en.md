@@ -193,15 +193,24 @@ kox server              # VLESS server parameters
 kox update-sub          # Update server parameters from subscription
 kox cron-on             # Enable auto-update (daily at 04:00)
 kox cron-off            # Disable auto-update
+kox upgrade             # Check for and install KOX Shield updates
 
 # Backups
 kox backup              # Backup config.json
 kox restore [file]      # Restore from backup
 
+# Logs
+kox log                 # Recent Xray errors
+kox log-live            # Live log stream (Ctrl+C to stop)
+kox clear-log           # Clear all logs (Xray + bot)
+
 # Telegram Bot
 kox bot                 # Bot status
 kox admin set <ID>      # Set Telegram administrator
 kox admin show          # Show current administrator
+
+# Help
+kox help                # List all commands
 ```
 
 ---
@@ -323,6 +332,50 @@ kox add my-blocked-site.com
 
 ---
 
+## ⬆️ Updating KOX Shield
+
+### Automatically (recommended)
+
+Starting from version `2026.04.13`, the console has a built-in update command:
+
+```bash
+kox upgrade
+```
+
+It checks the version on GitHub, shows the changelog, and asks for confirmation before downloading and installing new script versions.
+
+---
+
+### Manually (for users on the first version without `kox upgrade`)
+
+If you have an old version and the `kox upgrade` command doesn't exist yet — run a one-time manual update via SSH (port 222):
+
+```bash
+# 1. Stop the bot
+/opt/etc/init.d/S90kox-bot stop 2>/dev/null; true
+
+# 2. Download new scripts
+wget -qO /opt/bin/kox \
+  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-cli.sh
+wget -qO /opt/bin/kox-bot \
+  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-bot.sh
+wget -qO /opt/etc/init.d/S90kox-bot \
+  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/S90kox-bot
+
+# 3. Make executable
+chmod +x /opt/bin/kox /opt/bin/kox-bot /opt/etc/init.d/S90kox-bot
+
+# 4. Start the bot
+/opt/etc/init.d/S90kox-bot start
+
+# 5. Verify
+kox status
+```
+
+After this one-time update, `kox upgrade` will be available for all future versions.
+
+---
+
 ## ❓ FAQ
 
 **Q: YouTube doesn't work after installation**
@@ -346,6 +399,11 @@ kox on    # Re-enable
 **Q: How to update server parameters?**
 ```bash
 kox update-sub   # Updates from subscription, restarts Xray
+```
+
+**Q: How to update KOX Shield to the latest version?**
+```bash
+kox upgrade   # Checks for updates, shows what changed, asks for confirmation
 ```
 
 **Q: Bot is not responding**

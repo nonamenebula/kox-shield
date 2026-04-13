@@ -1,0 +1,29 @@
+# CHANGELOG — KOX Shield
+
+## 2026.04.13
+
+- Добавлена команда `kox upgrade` — проверка и установка обновлений прямо с роутера
+- Добавлена команда `kox clear-log` — очистка логов Xray и бота
+- Версия KOX Shield теперь отображается в баннере консоли и выводе `kox status`
+- Telegram бот показывает версию в `/start`, статусе и справке
+
+## 2026.04.12
+
+- Переименование KOX VPN → KOX Shield
+- Обновлены URL репозитория на kox-shield
+- Синхронизированы standalone-скрипты в xraykit.sh
+
+## 2026.04.11
+
+- Билингвальный README (RU + EN)
+- README.md — русский по умолчанию, README.en.md — английский
+- Добавлен раздел миграции с Kvass и сравнительная таблица
+
+## 2026.04.10
+
+- Первый релиз KOX VPN для роутеров Keenetic
+- xraykit.sh — установщик с Mac/ПК
+- install.sh — установка одной командой прямо с роутера
+- kox-cli.sh — консоль управления /opt/bin/kox
+- kox-bot.sh — Telegram бот (Bot API 9.4, sticky messages, цветные кнопки)
+- S90kox-bot — Entware init.d сервис

@@ -68,7 +68,9 @@ kox_help() {
   printf "  ${G}kox restore [файл]${N}   — восстановить из бэкапа\n\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
-  printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n\n"
+  printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
+  printf "  ${G}kox upgrade${N}          — проверить и установить обновление KOX Shield\n\n"
+  printf "  ${G}kox clear-log${N}        — очистить логи Xray и бота\n\n"
   printf "  ${G}kox bot${N}              — статус Telegram бота\n"
   printf "  ${G}kox admin set <id>${N}   — назначить Telegram-администратора\n"
   printf "  ${G}kox admin show${N}       — показать текущего администратора\n\n"
@@ -517,6 +519,108 @@ kox_admin() {
   esac
 }
 
+kox_clear_log() {
+  printf '' > "$ERRLOG" 2>/dev/null || true
+  printf '' > "$ACCLOG" 2>/dev/null || true
+  printf '' > "/opt/var/log/kox-bot.log" 2>/dev/null || true
+  ok "Логи очищены"
+}
+
+kox_upgrade() {
+  GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
+  info "Проверяю обновления KOX Shield..."
+
+  REMOTE_VERSION=$(curl -sSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+
+  if [ -z "$REMOTE_VERSION" ]; then
+    fail "Не удалось получить информацию об обновлениях"
+    info "Проверьте подключение к интернету"
+    return 1
+  fi
+
+  # Compare versions: convert YYYY.MM.DD → YYYYMMDD integer
+  CUR_INT=$(printf '%s' "$KOX_VERSION"    | tr -d '.')
+  REM_INT=$(printf '%s' "$REMOTE_VERSION" | tr -d '.')
+
+  if [ "$REM_INT" -le "$CUR_INT" ] 2>/dev/null; then
+    ok "У вас актуальная версия: ${W}v${KOX_VERSION}${N}"
+    return 0
+  fi
+
+  warn "Доступно обновление: ${W}v${REMOTE_VERSION}${N}  (текущая: v${KOX_VERSION})"
+  sep
+
+  # Show changelog for the new version
+  CHANGELOG=$(curl -sSL --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null)
+  if [ -n "$CHANGELOG" ]; then
+    info "${W}Что нового в v${REMOTE_VERSION}:${N}"
+    printf '%s\n' "$CHANGELOG" | \
+      awk '/^## /{if(found)exit; found=1; next} found{print}' | \
+      grep -v '^[[:space:]]*$' | \
+      while IFS= read -r LINE; do printf "  ${C}%s${N}\n" "$LINE"; done
+  fi
+
+  sep
+  printf "\n"
+  printf "  Установить обновление? [y/N] "
+  read -r ANSWER </dev/tty 2>/dev/null || ANSWER=""
+
+  case "$ANSWER" in
+    y|Y|yes|YES|д|Д) : ;;
+    *)
+      info "Обновление отменено"
+      return 0
+      ;;
+  esac
+
+  info "Загружаю обновление..."
+
+  # Backup current scripts
+  cp /opt/bin/kox     /opt/bin/kox.backup     2>/dev/null || true
+  cp /opt/bin/kox-bot /opt/bin/kox-bot.backup 2>/dev/null || true
+
+  FAIL=0
+
+  # kox-cli.sh → /opt/bin/kox
+  if curl -sSL --max-time 30 "${GITHUB_RAW}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-cli ]; then
+    chmod +x /tmp/kox-upgrade-cli
+    mv /tmp/kox-upgrade-cli /opt/bin/kox
+    ok "kox (консоль) обновлён"
+  else
+    fail "Ошибка загрузки kox-cli.sh — восстанавливаю backup"
+    mv /opt/bin/kox.backup /opt/bin/kox 2>/dev/null || true
+    FAIL=1
+  fi
+
+  # kox-bot.sh → /opt/bin/kox-bot
+  if curl -sSL --max-time 30 "${GITHUB_RAW}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-bot ]; then
+    chmod +x /tmp/kox-upgrade-bot
+    mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
+    ok "kox-bot обновлён"
+  else
+    warn "Ошибка загрузки kox-bot.sh"
+  fi
+
+  # S90kox-bot → /opt/etc/init.d/S90kox-bot
+  if curl -sSL --max-time 30 "${GITHUB_RAW}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-init ]; then
+    chmod +x /tmp/kox-upgrade-init
+    mv /tmp/kox-upgrade-init "$BOT_INIT"
+    ok "S90kox-bot обновлён"
+  fi
+
+  [ "$FAIL" -eq 1 ] && return 1
+
+  sep
+  ok "Обновление завершено! Версия: ${W}v${REMOTE_VERSION}${N}"
+  info "Перезапускаю Telegram бота..."
+  "$BOT_INIT" restart >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось перезапустить бота"
+  info "Изменения в консоли вступят в силу в следующем SSH-сеансе"
+  sep
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 CMD="${1:-}"
 shift 2>/dev/null || true
@@ -544,6 +648,8 @@ case "$CMD" in
   update-sub)    kox_update_sub ;;
   cron-on)       kox_cron_enable ;;
   cron-off)      kox_cron_disable ;;
+  upgrade)       kox_upgrade ;;
+  clear-log)     kox_clear_log ;;
   bot)           kox_bot ;;
   admin)         kox_admin "$@" ;;
   help|--help|-h|"") kox_banner; kox_help ;;
