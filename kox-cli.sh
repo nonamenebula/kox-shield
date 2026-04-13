@@ -2,6 +2,8 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
+KOX_VERSION="2026.04.13"
+
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
 ERRLOG="/opt/var/log/xray-err.log"
@@ -35,6 +37,7 @@ kox_banner() {
   printf "${W}  ╚═╝  ╚═╝   ╚═════╝  ╚═╝  ╚═╝${N}\n"
   printf "\n"
   printf "${C}            ── VPN Console ──${N}\n"
+  printf "${C}              v${KOX_VERSION}${N}\n"
   printf "\n"
   printf "  ${C}🌐 $(hyperlink 'https://kox.nonamenebula.ru/register' 'kox.nonamenebula.ru')${N}\n"
   printf "  ${C}📢 $(hyperlink 'https://t.me/PrivateProxyKox' 't.me/PrivateProxyKox')${N}\n"
@@ -133,6 +136,8 @@ kox_status() {
   else
     ok "Критических ошибок в логе нет"
   fi
+
+  info "Версия KOX Shield: ${W}v${KOX_VERSION}${N}"
   sep
 }
 

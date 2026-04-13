@@ -3,6 +3,8 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
+KOX_VERSION="2026.04.13"
+
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
 ERRLOG="/opt/var/log/xray-err.log"
@@ -174,7 +176,7 @@ h_status() {
   VPN_ST=$([ -f /tmp/kox-vpn-off ] && echo "❌ ВЫКЛЮЧЕН" || echo "✅ ВКЛЮЧЕН")
   SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   CONN=$(netstat -tn 2>/dev/null | grep -c :10808 2>/dev/null || echo 0)
-  update_menu "$CHAT" "📊 <b>Статус KOX Shield</b>
+  update_menu "$CHAT" "📊 <b>Статус KOX Shield</b>  <i>v${KOX_VERSION}</i>
 
 Xray:         ${XRAY_OK}
 Порт 10808:   ${PORT_OK}
@@ -403,7 +405,7 @@ h_add_ip() {
 
 h_help() {
   local CHAT="$1"
-  update_menu "$CHAT" "❓ <b>KOX Shield Bot — справка</b>
+  update_menu "$CHAT" "❓ <b>KOX Shield Bot — справка</b>  <i>v${KOX_VERSION}</i>
 
 <b>Меню кнопок:</b>
 📊 Статус — Xray, iptables, VPN
@@ -541,6 +543,7 @@ while true; do
       /start|/menu|menu)
         update_menu "$CHAT_ID" \
           "🔑 <b>KOX Shield — управление роутером</b>
+<i>v${KOX_VERSION}</i>
 
 Выберите действие:" "$(main_keyboard)"
         ;;
@@ -645,6 +648,7 @@ VPN прервётся примерно на 2 секунды." \
         rm -f "$WAIT_FILE"
         update_menu "$CHAT_ID" \
           "🔑 <b>KOX Shield — управление роутером</b>
+<i>v${KOX_VERSION}</i>
 
 Выберите действие:" "$(main_keyboard)"
         ;;
