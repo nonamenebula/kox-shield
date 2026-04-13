@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.04.16"
+KOX_VERSION="2026.04.17"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -51,13 +51,40 @@ sticky_save() { printf '%s' "$1" > "$STICKY_FILE"; }
 sticky_load() { cat "$STICKY_FILE" 2>/dev/null || echo ""; }
 sticky_clear() { rm -f "$STICKY_FILE"; }
 
+# ── Smart curl: proxy first, then direct fallback ─────────────────────────────
+# Tracks which mode is working to avoid repeated fallback overhead
+_CURL_MODE="proxy"  # proxy | direct
+
+tg_curl() {
+  local RESULT=""
+  if [ "$_CURL_MODE" = "proxy" ]; then
+    RESULT=$(curl -s "$@" -x "$PROXY" 2>/dev/null)
+    if [ -z "$RESULT" ]; then
+      # Proxy failed — try direct
+      RESULT=$(curl -s "$@" 2>/dev/null)
+      if [ -n "$RESULT" ]; then
+        [ "$_CURL_MODE" != "direct" ] && log "WARN: proxy unavailable, using direct connection"
+        _CURL_MODE="direct"
+      fi
+    fi
+  else
+    # Already in direct mode — try direct first, retry proxy periodically
+    RESULT=$(curl -s "$@" 2>/dev/null)
+    if [ -z "$RESULT" ]; then
+      RESULT=$(curl -s "$@" -x "$PROXY" 2>/dev/null)
+      [ -n "$RESULT" ] && _CURL_MODE="proxy" && log "INFO: proxy connection restored"
+    fi
+  fi
+  printf '%s' "$RESULT"
+}
+
 # ── API Helpers ───────────────────────────────────────────────────────────────
 
 # Build and POST to Telegram API, return response
 api_call() {
   local METHOD="$1" PAYLOAD="$2"
-  curl -s -m 20 -x "$PROXY" -X POST "${API}/${METHOD}" \
-    -H "Content-Type: application/json" -d "$PAYLOAD" 2>/dev/null
+  tg_curl -m 20 -X POST "${API}/${METHOD}" \
+    -H "Content-Type: application/json" -d "$PAYLOAD"
 }
 
 answer_cb() {
@@ -880,9 +907,8 @@ while true; do
     [ -n "$KOX_BOT_TOKEN" ] && API="https://api.telegram.org/bot${KOX_BOT_TOKEN}"
   fi
 
-  RESPONSE=$(curl -s -m 35 -x "$PROXY" \
-    "${API}/getUpdates?offset=${OFFSET}&timeout=30&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D" \
-    2>/dev/null)
+  RESPONSE=$(tg_curl -m 35 \
+    "${API}/getUpdates?offset=${OFFSET}&timeout=30&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D")
 
   # Check for KOX Shield and list updates (throttled internally)
   check_kox_update
