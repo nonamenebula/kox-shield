@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.14"
+KOX_VERSION="2026.04.15"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -78,6 +78,7 @@ kox_help() {
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
   printf "  ${G}kox upgrade${N}          — проверить и установить обновление KOX Shield\n\n"
+  printf "  ${G}kox bot-setup${N}        — мастер первичной настройки Telegram бота\n"
   printf "  ${G}kox bot${N}              — статус Telegram бота\n"
   printf "  ${G}kox admin set <id>${N}   — назначить Telegram-администратора\n"
   printf "  ${G}kox admin show${N}       — показать текущего администратора\n\n"
@@ -460,6 +461,124 @@ kox_cron_enable() {
 kox_cron_disable() {
   crontab -l 2>/dev/null | grep -v kox-update | crontab -
   ok "Авто-обновление отключено"
+}
+
+kox_bot_setup() {
+  load_conf
+  kox_banner
+  sep
+  printf " ${W}🤖 Мастер настройки Telegram бота KOX Shield${N}\n"
+  sep
+  printf "\n"
+
+  # ── Шаг 1: BotFather ────────────────────────────────────────────
+  printf " ${W}Шаг 1 из 3 — Создайте Telegram бота${N}\n\n"
+  printf "  1. Откройте Telegram и перейдите к боту ${C}@BotFather${N}\n"
+  printf "     Ссылка: $(hyperlink 'https://t.me/BotFather' 'https://t.me/BotFather')\n\n"
+  printf "  2. Отправьте команду: ${W}/newbot${N}\n\n"
+  printf "  3. Введите название бота (например: ${W}My KOX Shield${N})\n\n"
+  printf "  4. Введите username бота (должен заканчиваться на ${W}bot${N},\n"
+  printf "     например: ${W}mykoxshield_bot${N})\n\n"
+  printf "  5. BotFather пришлёт вам токен вида:\n"
+  printf "     ${Y}1234567890:ABCDefGHIJKLmnoPQRSTuvwXYZ${N}\n\n"
+  sep
+  printf " ${C}Вставьте токен бота сюда:${N} "
+  read -r INPUT_TOKEN </dev/tty
+  printf "\n"
+
+  # Validate token format
+  printf '%s' "$INPUT_TOKEN" | grep -qE '^[0-9]{8,12}:[A-Za-z0-9_-]{30,50}$' || {
+    fail "Неверный формат токена. Ожидается: ${Y}1234567890:ABCDefGHI...${N}"
+    printf "\n  Получить токен можно у ${C}@BotFather${N} командой /newbot\n\n"
+    return 1
+  }
+
+  # Test token with Telegram API
+  info "Проверяю токен..."
+  BOT_INFO=$(curl -fsSL --max-time 10 \
+    "https://api.telegram.org/bot${INPUT_TOKEN}/getMe" 2>/dev/null)
+  BOT_OK=$(printf '%s' "$BOT_INFO" | grep -o '"ok":true' || true)
+  if [ -z "$BOT_OK" ]; then
+    fail "Токен недействителен или нет доступа к Telegram"
+    return 1
+  fi
+  BOT_USERNAME=$(printf '%s' "$BOT_INFO" | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
+  ok "Токен действителен! Бот: ${W}@${BOT_USERNAME}${N}"
+  printf "\n"
+
+  # Save token to kox.conf
+  if [ ! -f "$KOXCONF" ]; then
+    printf 'KOX_BOT_TOKEN="%s"\n' "$INPUT_TOKEN" > "$KOXCONF"
+  elif grep -q 'KOX_BOT_TOKEN' "$KOXCONF"; then
+    sed -i "s|^KOX_BOT_TOKEN=.*|KOX_BOT_TOKEN=\"${INPUT_TOKEN}\"|" "$KOXCONF"
+  else
+    printf '\nKOX_BOT_TOKEN="%s"\n' "$INPUT_TOKEN" >> "$KOXCONF"
+  fi
+
+  # ── Шаг 2: Ваш Telegram ID ──────────────────────────────────────
+  sep
+  printf " ${W}Шаг 2 из 3 — Узнайте ваш Telegram ID${N}\n\n"
+  printf "  Бот будет управляться только вами.\n"
+  printf "  Для этого нужен ваш числовой Telegram ID.\n\n"
+  printf "  Откройте бота ${C}@userinfobot${N} и нажмите /start:\n"
+  printf "  Ссылка: $(hyperlink 'https://t.me/userinfobot' 'https://t.me/userinfobot')\n\n"
+  printf "  Он ответит вашим ID, например: ${Y}108707475${N}\n\n"
+  sep
+  printf " ${C}Вставьте ваш Telegram ID сюда:${N} "
+  read -r INPUT_ADMIN_ID </dev/tty
+  printf "\n"
+
+  # Validate numeric ID
+  printf '%s' "$INPUT_ADMIN_ID" | grep -qE '^[0-9]{5,15}$' || {
+    fail "Неверный ID. Ожидается числовой ID, например: ${Y}108707475${N}"
+    return 1
+  }
+
+  # Save admin ID to kox.conf
+  if grep -q 'KOX_ADMIN_ID' "$KOXCONF"; then
+    sed -i "s|^KOX_ADMIN_ID=.*|KOX_ADMIN_ID=\"${INPUT_ADMIN_ID}\"|" "$KOXCONF"
+  else
+    printf '\nKOX_ADMIN_ID="%s"\n' "$INPUT_ADMIN_ID" >> "$KOXCONF"
+  fi
+  ok "Admin ID сохранён: ${W}${INPUT_ADMIN_ID}${N}"
+  printf "\n"
+
+  # Ensure default conf values
+  for KEY_VAL in \
+    'KOX_AUTO_UPGRADE="no"' \
+    'KOX_AUTO_LIST_UPDATE="no"' \
+    'KOX_UPGRADE_NOTIFY="yes"' \
+    'KOX_LIST_NOTIFY="yes"'
+  do
+    KEY="${KEY_VAL%%=*}"
+    grep -q "^${KEY}=" "$KOXCONF" 2>/dev/null || printf '%s\n' "$KEY_VAL" >> "$KOXCONF"
+  done
+
+  # ── Шаг 3: Запуск бота ──────────────────────────────────────────
+  sep
+  printf " ${W}Шаг 3 из 3 — Запустите бота${N}\n\n"
+
+  if [ -f "$BOT_INIT" ]; then
+    info "Запускаю Telegram бота..."
+    "$BOT_INIT" restart >/dev/null 2>&1
+    sleep 2
+    if "$BOT_INIT" status 2>/dev/null | grep -qi 'running\|started\|active'; then
+      ok "Бот запущен!"
+    else
+      pgrep -f kox-bot >/dev/null 2>&1 && ok "Бот запущен!" || warn "Статус бота неизвестен, проверьте: kox bot"
+    fi
+  else
+    warn "init-скрипт бота не найден (${BOT_INIT})"
+  fi
+
+  printf "\n"
+  sep
+  printf " ${G}✓  Настройка завершена!${N}\n\n"
+  printf "  Теперь перейдите в вашего бота и нажмите /start:\n"
+  printf "  ${C}https://t.me/${BOT_USERNAME}${N}\n\n"
+  printf "  После этого бот пришлёт главное меню управления.\n\n"
+  sep
+  printf "\n"
 }
 
 kox_bot() {
@@ -963,6 +1082,7 @@ case "$CMD" in
   list-update)   kox_list_update ;;
   upgrade)       kox_upgrade "$@" ;;
   clear-log)     kox_clear_log ;;
+  bot-setup)     kox_bot_setup ;;
   bot)           kox_bot ;;
   admin)         kox_admin "$@" ;;
   help|--help|-h|"") kox_banner; kox_help ;;
