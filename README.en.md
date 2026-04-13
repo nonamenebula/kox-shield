@@ -185,6 +185,7 @@ kox list-ip             # List all IP/subnets
 # Logs & diagnostics
 kox log                 # Recent Xray errors
 kox log-live            # Live log stream (Ctrl+C to stop)
+kox clear-log           # Clear all logs (Xray + bot)
 kox test                # Validate config.json
 kox stats               # Traffic statistics
 kox server              # VLESS server parameters
@@ -198,11 +199,6 @@ kox upgrade             # Check for and install KOX Shield updates
 # Backups
 kox backup              # Backup config.json
 kox restore [file]      # Restore from backup
-
-# Logs
-kox log                 # Recent Xray errors
-kox log-live            # Live log stream (Ctrl+C to stop)
-kox clear-log           # Clear all logs (Xray + bot)
 
 # Telegram Bot
 kox bot                 # Bot status
