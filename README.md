@@ -344,31 +344,14 @@ kox upgrade
 
 ### Вручную (для пользователей первой версии без `kox upgrade`)
 
-Если у вас старая версия и команда `kox upgrade` не существует — выполните одноразовое обновление вручную через SSH (порт 222):
+Если у вас старая версия и команда `kox upgrade` не существует — достаточно обновить только консоль одной командой через SSH (порт 222):
 
 ```bash
-# 1. Остановите бота
-/opt/etc/init.d/S90kox-bot stop 2>/dev/null; true
-
-# 2. Скачайте новые скрипты
 curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-cli.sh \
-  -o /opt/bin/kox
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-bot.sh \
-  -o /opt/bin/kox-bot
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/S90kox-bot \
-  -o /opt/etc/init.d/S90kox-bot
-
-# 3. Дайте права на выполнение
-chmod +x /opt/bin/kox /opt/bin/kox-bot /opt/etc/init.d/S90kox-bot
-
-# 4. Запустите бота
-/opt/etc/init.d/S90kox-bot start
-
-# 5. Проверьте
-kox status
+  -o /opt/bin/kox && chmod +x /opt/bin/kox && kox upgrade
 ```
 
-После этого обновления команда `kox upgrade` будет доступна для всех последующих версий.
+Это скачает новую версию консоли и сразу запустит `kox upgrade`, который обновит всё остальное автоматически.
 
 ---
 

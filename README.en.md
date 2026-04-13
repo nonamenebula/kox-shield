@@ -344,31 +344,14 @@ It checks the version on GitHub, shows the changelog, and asks for confirmation 
 
 ### Manually (for users on the first version without `kox upgrade`)
 
-If you have an old version and the `kox upgrade` command doesn't exist yet — run a one-time manual update via SSH (port 222):
+If you have an old version and the `kox upgrade` command doesn't exist yet — just update the console with one command via SSH (port 222):
 
 ```bash
-# 1. Stop the bot
-/opt/etc/init.d/S90kox-bot stop 2>/dev/null; true
-
-# 2. Download new scripts
 curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-cli.sh \
-  -o /opt/bin/kox
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-bot.sh \
-  -o /opt/bin/kox-bot
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/S90kox-bot \
-  -o /opt/etc/init.d/S90kox-bot
-
-# 3. Make executable
-chmod +x /opt/bin/kox /opt/bin/kox-bot /opt/etc/init.d/S90kox-bot
-
-# 4. Start the bot
-/opt/etc/init.d/S90kox-bot start
-
-# 5. Verify
-kox status
+  -o /opt/bin/kox && chmod +x /opt/bin/kox && kox upgrade
 ```
 
-After this one-time update, `kox upgrade` will be available for all future versions.
+This downloads the new console and immediately runs `kox upgrade`, which updates everything else automatically.
 
 ---
 
