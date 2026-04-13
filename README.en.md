@@ -105,7 +105,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Connect to your router via SSH (port 222) and run one command:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
 ```
 
 > **Requirements:** Keenetic router with [Entware](https://help.keenetic.com/hc/en-us/articles/360021214160) installed
@@ -285,7 +285,7 @@ kox add my-blocked-site.com
 |--|---------|-------|
 | Protocol | VLESS + Reality | Shadowsocks |
 | DPI protection | ✅ Invisible to ISP | ⚠️ Partial |
-| Install from router | ✅ `wget \| sh` | ✅ |
+| Install from router | ✅ `curl \| sh` | ✅ |
 | Install from PC | ✅ `xraykit.sh` | ✅ |
 | CLI console | ✅ `kox` | ✅ |
 | Telegram Bot | ✅ Built-in | ❌ |

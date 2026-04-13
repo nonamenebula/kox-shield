@@ -105,7 +105,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Подключитесь к роутеру по SSH (порт 222) и выполните одну команду:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
 ```
 
 > **Требования:** Keenetic с установленным [Entware](https://help.keenetic.com/hc/ru/articles/360021214160)
@@ -285,7 +285,7 @@ kox add my-site.com
 |--|---------|-------|
 | Протокол | VLESS + Reality | Shadowsocks |
 | Защита от DPI | ✅ Невидим для провайдера | ⚠️ Частично |
-| Установка с роутера | ✅ `wget \| sh` | ✅ |
+| Установка с роутера | ✅ `curl \| sh` | ✅ |
 | Установка с ПК | ✅ `xraykit.sh` | ✅ |
 | CLI консоль | ✅ `kox` | ✅ |
 | Telegram Bot | ✅ Встроен | ❌ |
