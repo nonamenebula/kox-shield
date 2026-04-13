@@ -351,12 +351,12 @@ kox upgrade
 /opt/etc/init.d/S90kox-bot stop 2>/dev/null; true
 
 # 2. Скачайте новые скрипты
-wget -qO /opt/bin/kox \
-  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-cli.sh
-wget -qO /opt/bin/kox-bot \
-  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-bot.sh
-wget -qO /opt/etc/init.d/S90kox-bot \
-  https://raw.githubusercontent.com/nonamenebula/kox-shield/main/S90kox-bot
+curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-cli.sh \
+  -o /opt/bin/kox
+curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/kox-bot.sh \
+  -o /opt/bin/kox-bot
+curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/S90kox-bot \
+  -o /opt/etc/init.d/S90kox-bot
 
 # 3. Дайте права на выполнение
 chmod +x /opt/bin/kox /opt/bin/kox-bot /opt/etc/init.d/S90kox-bot
