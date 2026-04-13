@@ -546,28 +546,55 @@ $(printf '%s' "$CHANGELOG" | sed 's/^/• /')"
   log "KOX upgrade notification sent for v${REMOTE_VER}"
 }
 
-_lists_get_new_domains() {
-  # Compare loaded categories: find domains in new remote files not in current ones
-  # Returns multi-line: "category: domain1, domain2, ..."
+_lists_compute_diff() {
+  # Compare loaded categories: find added AND removed domains
+  # Outputs lines prefixed with ADD: or REM:
   LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
   [ -z "$LOADED" ] && return 0
   printf '%s\n' "$LOADED" | while IFS= read -r S; do
     [ -z "$S" ] && continue
     LOCAL_FILE="${KOX_LISTS_DIR}/${S}.txt"
     NEW_FILE="/tmp/kox-newlist-${S}.txt"
-    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/${S}.txt" -o "$NEW_FILE" 2>/dev/null || continue
-    ADDED=""
+    # Fetch remote file if not already fetched
+    [ -f "$NEW_FILE" ] || curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/${S}.txt" \
+      -o "$NEW_FILE" 2>/dev/null || continue
+    [ -f "$LOCAL_FILE" ] || continue
+
+    # Find added: in new but not in old
     while IFS= read -r LINE; do
       case "$LINE" in '#'*|'') continue ;; esac
-      if ! grep -qxF "$LINE" "$LOCAL_FILE" 2>/dev/null; then
-        ADDED="${ADDED}${LINE}, "
-      fi
+      grep -qxF "$LINE" "$LOCAL_FILE" 2>/dev/null || printf 'ADD:%s:%s\n' "$S" "$LINE"
     done < "$NEW_FILE"
-    if [ -n "$ADDED" ]; then
-      ADDED=$(printf '%s' "$ADDED" | sed 's/, $//')
-      printf '  • <b>%s</b>: +%s\n' "$S" "$ADDED"
-    fi
+
+    # Find removed: in old but not in new
+    while IFS= read -r LINE; do
+      case "$LINE" in '#'*|'') continue ;; esac
+      grep -qxF "$LINE" "$NEW_FILE" 2>/dev/null || printf 'REM:%s:%s\n' "$S" "$LINE"
+    done < "$LOCAL_FILE"
   done
+}
+
+_diff_to_msg() {
+  # Takes diff lines, formats into human-readable message
+  # $1 = prefix to use (e.g. "added" or "removed")
+  DIFF="$1"; TYPE="$2"; ICON="$3"
+  printf '%s' "$DIFF" | grep "^${TYPE}:" | \
+    awk -F: -v icon="$ICON" '
+      {cat=$2; dom=$3}
+      cat != prev { if(prev!="") printf "\n"; printf "  %s <b>%s</b>: ", icon, cat; prev=cat }
+      { printf dom", " }
+      END { if(prev!="") printf "\n" }
+    ' | sed 's/, *$//'
+}
+
+_lists_get_new_domains() {
+  _lists_compute_diff | grep '^ADD:' | \
+    awk -F: '{cat=$2; dom=$3; line[cat]=line[cat] dom", "} END{for(c in line){s=line[c]; sub(/, $/,"",s); print "  • <b>"c"</b>: +"s}}'
+}
+
+_lists_get_removed_domains() {
+  _lists_compute_diff | grep '^REM:' | \
+    awk -F: '{cat=$2; dom=$3; line[cat]=line[cat] dom", "} END{for(c in line){s=line[c]; sub(/, $/,"",s); print "  • <b>"c"</b>: -"s}}'
 }
 
 check_lists_update() {
@@ -589,10 +616,13 @@ check_lists_update() {
   # Load conf to check auto-update setting
   [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
 
-  # Build diff of new domains across loaded categories
-  NEW_DOMAINS=$(_lists_get_new_domains)
-
+  # Compute diff once (fetches remote files into /tmp/kox-newlist-*.txt)
   LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+  DIFF_ALL=$(_lists_compute_diff)
+  NEW_DOMAINS=$(printf '%s\n' "$DIFF_ALL" | grep '^ADD:' | \
+    awk -F: '{cat=$2; dom=$3; a[cat]=a[cat]""dom", "} END{for(c in a){s=a[c]; sub(/, $/,"",s); printf "  • <b>%s</b>: +%s\n",c,s}}')
+  REM_DOMAINS=$(printf '%s\n' "$DIFF_ALL" | grep '^REM:' | \
+    awk -F: '{cat=$2; dom=$3; a[cat]=a[cat]""dom", "} END{for(c in a){s=a[c]; sub(/, $/,"",s); printf "  • <b>%s</b>: -%s\n",c,s}}')
 
   # Auto-update if enabled
   if [ "${KOX_AUTO_LIST_UPDATE:-no}" = "yes" ]; then
@@ -612,11 +642,15 @@ check_lists_update() {
 Версия: <code>v${REMOTE_VER}</code>"
     [ -n "$NEW_DOMAINS" ] && MSG="${MSG}
 
-📋 <b>Добавлено:</b>
+➕ <b>Добавлено в туннель:</b>
 ${NEW_DOMAINS}"
+    [ -n "$REM_DOMAINS" ] && MSG="${MSG}
+
+➖ <b>Удалено из туннелей:</b>
+${REM_DOMAINS}"
     MSG="${MSG}
 
-Применить на Xray? (<code>kox list-update</code>)"
+Применить изменения на Xray?"
     KBD='{"inline_keyboard":[[{"text":"⚡ Применить сейчас","callback_data":"lists_apply_xray","style":"success"}]]}'
     PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
       '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
@@ -626,22 +660,29 @@ ${NEW_DOMAINS}"
 
   lists_notify_allowed || return 0
 
+  HAS_DIFF=0
+  [ -n "$NEW_DOMAINS" ] && HAS_DIFF=1
+  [ -n "$REM_DOMAINS" ] && HAS_DIFF=1
+
   MSG="🔔 <b>Обновление списков доменов!</b>
 
-Доступна новая версия: <code>v${REMOTE_VER}</code>
-Текущая: <code>${LOCAL_VER:-не установлена}</code>"
+Версия: <code>v${REMOTE_VER}</code> (текущая: <code>${LOCAL_VER:-нет}</code>)"
 
-  if [ -n "$NEW_DOMAINS" ]; then
-    MSG="${MSG}
+  if [ "$HAS_DIFF" -eq 1 ]; then
+    [ -n "$NEW_DOMAINS" ] && MSG="${MSG}
 
-📋 <b>Что добавлено:</b>
-${NEW_DOMAINS}
+➕ <b>Добавляются домены:</b>
+${NEW_DOMAINS}"
+    [ -n "$REM_DOMAINS" ] && MSG="${MSG}
 
-Добавить эти домены в исключения тоже?"
+➖ <b>Удаляются домены:</b>
+${REM_DOMAINS}
+
+Применить эти изменения у вас тоже?"
   elif [ -n "$LOADED" ]; then
     MSG="${MSG}
 
-📂 Загруженные категории: $(printf '%s' "$LOADED" | tr '\n' ' ')
+📂 Ваши категории: $(printf '%s' "$LOADED" | tr '\n' ' ')
 
 Обновить списки?"
   else
@@ -651,7 +692,7 @@ ${NEW_DOMAINS}
   fi
 
   KBD='{"inline_keyboard":[[
-    {"text":"✅ Добавить / обновить","callback_data":"lists_do_update","style":"success"},
+    {"text":"✅ Применить изменения","callback_data":"lists_do_update","style":"success"},
     {"text":"⏰ Не сегодня","callback_data":"lists_snooze_1"}
   ],[
     {"text":"📅 Не этот месяц","callback_data":"lists_snooze_30"},
@@ -661,7 +702,7 @@ ${NEW_DOMAINS}
   PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
     '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
   api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
-  log "Lists update notification sent for v${REMOTE_VER}"
+  log "Lists update notification sent for v${REMOTE_VER} (add=${NEW_DOMAINS:+yes} rem=${REM_DOMAINS:+yes})"
 }
 
 h_lists_update() {
@@ -670,7 +711,6 @@ h_lists_update() {
   REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
 
-  # Download categories.json
   mkdir -p "$KOX_LISTS_DIR"
   curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
     -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
@@ -678,30 +718,28 @@ h_lists_update() {
   LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
   if [ -z "$LOADED" ]; then
     printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
-    update_menu "$CHAT" "✅ <b>Индекс категорий обновлён</b>
+    KBD='{"inline_keyboard":[[{"text":"📋 Загрузить категории","callback_data":"listcats","style":"primary"}]]}'
+    PAYLOAD=$(jq -cn --argjson c "$CHAT" --arg t "✅ <b>Индекс категорий обновлён</b>
 
 Версия: <code>v${REMOTE_VER}</code>
-Загруженных категорий нет — используйте /listcats для выбора."
+Загруженных категорий нет — выберите нужные:" --argjson k "$KBD" \
+      '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
+    api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
+    update_menu "$CHAT" "✅ Индекс обновлён. Выберите категории для загрузки."
     return
   fi
 
-  UPDATED=""
-  printf '%s\n' "$LOADED" | while IFS= read -r S; do
-    [ -z "$S" ] && continue
-    curl -fsSL -x "$PROXY" --max-time 15 "${GITHUB_LISTS}/${S}.txt" \
-      -o "${KOX_LISTS_DIR}/${S}.txt" 2>/dev/null
-    UPDATED="${UPDATED}✅ ${S}\n"
-  done
+  # Apply update: use kox list-update for proper add/remove
+  /opt/bin/kox list-update >/tmp/kox-list-update-out 2>&1
   printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+  UPDATE_OUT=$(cat /tmp/kox-list-update-out 2>/dev/null | \
+    sed 's/\x1b\[[0-9;]*m//g' | grep -E '✓|✗|Обновлено|Xray' | head -10)
 
-  update_menu "$CHAT" "✅ <b>Списки обновлены!</b>
+  update_menu "$CHAT" "✅ <b>Списки обновлены до v${REMOTE_VER}</b>
 
-Версия: <code>v${REMOTE_VER}</code>
+${UPDATE_OUT}
 
-Файлы категорий загружены. Для применения выполните:
-<code>kox list-update</code>
-
-или используйте кнопку ниже."
+Изменения применены к Xray."
 }
 
 h_kox_do_upgrade() {
@@ -710,13 +748,34 @@ h_kox_do_upgrade() {
   REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
 
-  update_menu "$CHAT" "⏳ <b>Обновление KOX Shield...</b>
+  LOADED_CNT=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
 
-Устанавливается версия <code>v${REMOTE_VER}</code>
-Бот перезапустится через несколько секунд..."
+  update_menu "$CHAT" "⏳ <b>Обновление KOX Shield до v${REMOTE_VER}...</b>
+
+Загружаю файлы с GitHub...
+Бот перезапустится через несколько секунд."
 
   # Run upgrade in background (bot will be restarted by the upgrade script)
   /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1 &
+
+  # If no lists loaded, offer to load them after restart
+  if [ "${LOADED_CNT:-0}" -eq 0 ]; then
+    sleep 3
+    KBD='{"inline_keyboard":[[
+      {"text":"📋 Загрузить все категории","callback_data":"lists_load_all","style":"success"},
+      {"text":"🗂 Выбрать категории","callback_data":"listcats","style":"primary"}
+    ],[
+      {"text":"◀️ В меню","callback_data":"menu"}
+    ]]}'
+    PAYLOAD=$(jq -cn --argjson c "$CHAT" --argjson k "$KBD" \
+      --arg t "🔔 <b>Рекомендация:</b> у вас не загружено ни одной категории доменов!
+
+Без категорий туннель будет работать только для доменов добавленных вручную.
+
+Загрузить готовые списки прямо сейчас?" \
+      '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
+    api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
+  fi
 }
 
 h_settings() {
@@ -1043,6 +1102,18 @@ VPN прервётся примерно на 2 секунды." \
         update_menu "$CHAT_ID" "⚡ <b>Применяю обновления...</b>
 
 Xray перезапустится через несколько секунд." ;;
+
+      lists_load_all)
+        send_typing "$CHAT_ID"
+        update_menu "$CHAT_ID" "⏳ <b>Загружаю все категории...</b>
+
+Это займёт ~30 секунд..."
+        /opt/bin/kox list-load all >> /opt/var/log/kox-bot.log 2>&1 &
+        sleep 5
+        LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
+        update_menu "$CHAT_ID" "✅ <b>Загружено ${LOADED} категорий!</b>
+
+Все домены добавлены в туннель. Xray перезапущен." ;;
       lists_snooze_1)
         lists_set_snooze 1
         api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"⏰ Напомним завтра\"}" >/dev/null 2>&1

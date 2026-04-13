@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.14"
+KOX_VERSION="2026.04.13"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -819,11 +819,11 @@ kox_upgrade() {
     FAIL=1
   fi
 
-  # kox-bot.sh → /opt/etc/xray/kox-bot.sh
+  # kox-bot.sh → /opt/bin/kox-bot
   if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
       && [ -s /tmp/kox-upgrade-bot ]; then
     chmod +x /tmp/kox-upgrade-bot
-    mv /tmp/kox-upgrade-bot /opt/etc/xray/kox-bot.sh
+    mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
     ok "kox-bot обновлён"
   else
     warn "Ошибка загрузки kox-bot.sh"
@@ -844,6 +844,26 @@ kox_upgrade() {
   info "Перезапускаю Telegram бота..."
   "$BOT_INIT" restart >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось перезапустить бота"
   info "Изменения в консоли вступят в силу в следующем SSH-сеансе"
+
+  # Suggest loading domain lists if none loaded
+  LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
+  if [ "${LOADED:-0}" -eq 0 ]; then
+    sep
+    warn "У вас не загружено ни одной категории доменов!"
+    info "KOX Shield работает только с доменами из вашего конфига."
+    info "Рекомендуем загрузить готовые списки:"
+    printf "\n"
+    info "  ${W}kox list-cats${N}           — посмотреть доступные категории"
+    info "  ${W}kox list-load telegram${N}  — загрузить категорию"
+    info "  ${W}kox list-load all${N}       — загрузить все категории сразу"
+    printf "\n"
+    printf "  Загрузить все категории сейчас? [y/N] "
+    read -r ANS </dev/tty 2>/dev/null || ANS=""
+    case "$ANS" in
+      y|Y|yes|YES|д|Д) kox_list_load all ;;
+      *) info "Загрузить позже: ${W}kox list-load all${N}" ;;
+    esac
+  fi
   sep
 }
 
