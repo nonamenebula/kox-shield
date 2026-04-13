@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.14"
+KOX_VERSION="2026.04.13"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -549,24 +549,28 @@ _list_add_entries() {
   [ -f "$FILE" ] || { fail "Файл ${SLUG}.txt не найден"; return 1; }
   APPLIED="${KOX_LISTS_DIR}/.applied-${SLUG}"
   printf '' > "$APPLIED"
-  ADDED_D=0; ADDED_IP=0
+  ADDED_D=0; ADDED_IP=0; SKIP_D=0; SKIP_IP=0
   while IFS= read -r LINE; do
     case "$LINE" in '#'*|'') continue ;; esac
     if printf '%s' "$LINE" | grep -qE '^[0-9a-f:]+.*\/[0-9]+$'; then
-      if ! grep -qF "\"${LINE}\"" "$CONF" 2>/dev/null && grep -q "$IP_MARKER" "$CONF"; then
+      if grep -qF "\"${LINE}\"" "$CONF" 2>/dev/null; then
+        SKIP_IP=$((SKIP_IP+1))
+      elif grep -q "$IP_MARKER" "$CONF"; then
         awk -v ip="$LINE" -v m="$IP_MARKER" 'index($0,m)>0{print "          \""ip"\","}{print}' \
           "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
         printf 'cidr:%s\n' "$LINE" >> "$APPLIED"; ADDED_IP=$((ADDED_IP+1))
       fi
     else
-      if ! grep -qF "\"domain:${LINE}\"" "$CONF" 2>/dev/null && grep -q "$DOMAIN_MARKER" "$CONF"; then
+      if grep -qF "\"domain:${LINE}\"" "$CONF" 2>/dev/null; then
+        SKIP_D=$((SKIP_D+1))
+      elif grep -q "$DOMAIN_MARKER" "$CONF"; then
         awk -v d="$LINE" -v m="$DOMAIN_MARKER" 'index($0,m)>0{print "          \"domain:"d"\","}{print}' \
           "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
         printf 'domain:%s\n' "$LINE" >> "$APPLIED"; ADDED_D=$((ADDED_D+1))
       fi
     fi
   done < "$FILE"
-  printf '%d %d' "$ADDED_D" "$ADDED_IP"
+  printf '%d %d %d %d' "$ADDED_D" "$ADDED_IP" "$SKIP_D" "$SKIP_IP"
 }
 
 _list_remove_entries() {
@@ -593,8 +597,16 @@ kox_list_cats() {
   if [ ! -f "$CATS_FILE" ]; then
     info "Загружаю список категорий..."; _list_fetch_categories_json || { fail "Нет подключения"; return 1; }
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
+  LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.categories[] | "\(.slug)|\(.emoji)|\(.name)|\(.domains)|\(.cidrs)"' "$CATS_FILE" | \
+    while IFS='|' read -r SLUG EMJ NAME DOMS CIDRS; do
+      STATUS=" "
+      printf '%s' "$LOADED" | grep -qx "$SLUG" && STATUS="✓"
+      CNT="${DOMS}д"; [ "$CIDRS" -gt 0 ] 2>/dev/null && CNT="${CNT}+${CIDRS}ip"
+      printf "  [%s] %s  %-30s (%s)  %s\n" "$STATUS" "$EMJ" "$NAME" "$CNT" "$SLUG"
+    done
+  elif command -v python3 >/dev/null 2>&1; then
     python3 - "$CATS_FILE" "$LOADED" << 'PY'
 import sys, json
 cats_file = sys.argv[1]
@@ -624,7 +636,9 @@ kox_list_load() {
     info "Загружаю все категории..."
     CATS_FILE="${KOX_LISTS_DIR}/categories.json"
     [ -f "$CATS_FILE" ] || _list_fetch_categories_json
-    if command -v python3 >/dev/null 2>&1; then
+    if command -v jq >/dev/null 2>&1; then
+      SLUGS=$(jq -r '.categories[].slug' "$CATS_FILE")
+    elif command -v python3 >/dev/null 2>&1; then
       SLUGS=$(python3 -c "import json; d=json.load(open('$CATS_FILE')); print('\n'.join(c['slug'] for c in d['categories']))")
     else
       SLUGS=$(grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/\1/')
@@ -644,8 +658,13 @@ kox_list_load() {
     _list_fetch_cat "$SLUG" || { fail "Категория '${SLUG}' не найдена"; return 1; }
     RES=$(_list_add_entries "$SLUG")
     D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+    SD=$(printf '%s' "$RES" | cut -d' ' -f3); SI=$(printf '%s' "$RES" | cut -d' ' -f4)
     _list_mark_loaded "$SLUG"
-    ok "Добавлено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей"
+    if [ "$D" -gt 0 ] || [ "$I" -gt 0 ]; then
+      ok "Добавлено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей (уже было: ${SD}д+${SI}ip)"
+    else
+      ok "Категория ${W}${SLUG}${N} загружена (все ${SD}д+${SI}ip уже были в туннеле)"
+    fi
   fi
   info "Перезапускаю Xray..."
   "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
