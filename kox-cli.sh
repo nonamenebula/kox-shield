@@ -66,10 +66,13 @@ kox_help() {
   printf "  ${G}kox clear-log${N}        — очистить логи\n\n"
   printf "  ${G}kox backup${N}           — создать резервную копию\n"
   printf "  ${G}kox restore [файл]${N}   — восстановить из бэкапа\n\n"
-  printf "  ${G}kox list-cats${N}                   — список категорий доменов\n"
-  printf "  ${G}kox list-load <slug|all>${N}       — загрузить категорию в туннель\n"
-  printf "  ${G}kox list-remove <slug|all>${N}     — удалить категорию из туннеля\n"
-  printf "  ${G}kox list-check${N}                 — проверить обновления списков\n"
+  printf "  ${G}kox list-cats${N}                   — список категорий (с номерами)\n"
+  printf "  ${G}kox list-load${N}                  — интерактивный выбор категорий\n"
+  printf "  ${G}kox list-load 1 3 5${N}            — загрузить по номерам\n"
+  printf "  ${G}kox list-load all${N}              — загрузить все категории\n"
+  printf "  ${G}kox list-remove${N}                — интерактивное удаление\n"
+  printf "  ${G}kox list-remove all${N}            — удалить все категории\n"
+  printf "  ${G}kox list-check${N}                 — проверить обновления\n"
   printf "  ${G}kox list-update${N}                — обновить списки с GitHub\n\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
@@ -552,7 +555,7 @@ _list_add_entries() {
   ADDED_D=0; ADDED_IP=0; SKIP_D=0; SKIP_IP=0
   while IFS= read -r LINE; do
     case "$LINE" in '#'*|'') continue ;; esac
-    if printf '%s' "$LINE" | grep -qE '^[0-9a-f:]+.*\/[0-9]+$'; then
+    if printf '%s' "$LINE" | grep -qE '^[0-9a-f:.]+/[0-9]+$'; then
       if grep -qF "\"${LINE}\"" "$CONF" 2>/dev/null; then
         SKIP_IP=$((SKIP_IP+1))
       elif grep -q "$IP_MARKER" "$CONF"; then
@@ -591,58 +594,89 @@ _list_remove_entries() {
   printf '%d %d' "$REM_D" "$REM_IP"
 }
 
+_list_print_menu() {
+  # Prints numbered menu, returns slug lookup table to /tmp/kox-slugmap
+  CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+  LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
+  printf '' > /tmp/kox-slugmap
+  N=0
+  jq -r '.categories[] | "\(.slug)|\(.emoji)|\(.name)|\(.domains)|\(.cidrs)"' "$CATS_FILE" 2>/dev/null | \
+  while IFS='|' read -r SLUG EMJ NAME DOMS CIDRS; do
+    N=$((N+1))
+    STATUS=" "; printf '%s' "$LOADED" | grep -qx "$SLUG" && STATUS="✓"
+    CNT="${DOMS}д"; [ "$CIDRS" -gt 0 ] 2>/dev/null && CNT="${CNT}+${CIDRS}ip"
+    printf "%2d. [%s] %s %-28s %s\n" "$N" "$STATUS" "$EMJ" "$NAME" "($CNT)"
+    printf '%d=%s\n' "$N" "$SLUG" >> /tmp/kox-slugmap
+  done
+}
+
+_slug_from_arg() {
+  # Resolves number or slug to slug; prints resolved slug
+  ARG="$1"
+  if printf '%s' "$ARG" | grep -qE '^[0-9]+$'; then
+    grep "^${ARG}=" /tmp/kox-slugmap 2>/dev/null | cut -d= -f2
+  else
+    printf '%s' "$ARG"
+  fi
+}
+
 kox_list_cats() {
-  sep; info "${W}Категории доменов KOX Shield:${N}"; sep
   CATS_FILE="${KOX_LISTS_DIR}/categories.json"
   if [ ! -f "$CATS_FILE" ]; then
     info "Загружаю список категорий..."; _list_fetch_categories_json || { fail "Нет подключения"; return 1; }
   fi
-  LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.categories[] | "\(.slug)|\(.emoji)|\(.name)|\(.domains)|\(.cidrs)"' "$CATS_FILE" | \
-    while IFS='|' read -r SLUG EMJ NAME DOMS CIDRS; do
-      STATUS=" "
-      printf '%s' "$LOADED" | grep -qx "$SLUG" && STATUS="✓"
-      CNT="${DOMS}д"; [ "$CIDRS" -gt 0 ] 2>/dev/null && CNT="${CNT}+${CIDRS}ip"
-      printf "  [%s] %s  %-30s (%s)  %s\n" "$STATUS" "$EMJ" "$NAME" "$CNT" "$SLUG"
-    done
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 - "$CATS_FILE" "$LOADED" << 'PY'
-import sys, json
-cats_file = sys.argv[1]
-loaded = sys.argv[2].split('\n') if len(sys.argv) > 2 and sys.argv[2] else []
-with open(cats_file) as f:
-    data = json.load(f)
-for c in data['categories']:
-    status = "✓" if c['slug'] in loaded else " "
-    cnt = f"{c['domains']}д" + (f"+{c['cidrs']}ip" if c['cidrs'] else "")
-    print(f"  [{status}] {c['emoji']}  {c['name']:<28} ({cnt})   {c['slug']}")
-PY
-  else
-    grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/  \1/'
+  sep; info "${W}Доступные категории доменов:${N}  ✓ = уже загружена"; sep
+  _list_print_menu
+  sep
+  printf "\n"
+  info "Загрузить одну:      ${W}kox list-load 2${N}        (по номеру)"
+  info "Загрузить несколько: ${W}kox list-load 1 2 5${N}    (несколько)"
+  info "Загрузить все:       ${W}kox list-load all${N}"
+  info "Удалить:             ${W}kox list-remove 2${N}"
+  info "Обновления:          ${W}kox list-check${N}"
+  printf "\n"
+}
+
+_load_one_slug() {
+  S="$1"
+  if _list_is_loaded "$S"; then
+    warn "Уже загружена: ${W}${S}${N}"
+    return 0
   fi
-  sep
-  info "Загрузить:  ${W}kox list-load <slug>${N}  или  ${W}kox list-load all${N}"
-  info "Удалить:    ${W}kox list-remove <slug>${N}"
-  info "Обновления: ${W}kox list-check${N}"
-  sep
+  printf ' %s  ' "$S"
+  _list_fetch_cat "$S" >/dev/null 2>&1 || { printf '%s\n' "— ошибка загрузки"; return 1; }
+  RES=$(_list_add_entries "$S")
+  D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+  SD=$(printf '%s' "$RES" | cut -d' ' -f3); SI=$(printf '%s' "$RES" | cut -d' ' -f4)
+  _list_mark_loaded "$S"
+  if [ "$D" -gt 0 ] || [ "$I" -gt 0 ]; then
+    printf '→ %s+%s новых\n' "$D" "$I"
+  else
+    printf '→ уже было (%sд+%sip)\n' "$SD" "$SI"
+  fi
 }
 
 kox_list_load() {
-  SLUG="${1:-}"
-  [ -z "$SLUG" ] && fail "Укажите: kox list-load <slug> | all" && kox_list_cats && return 1
+  CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+  [ -f "$CATS_FILE" ] || _list_fetch_categories_json
 
-  if [ "$SLUG" = "all" ]; then
-    info "Загружаю все категории..."
-    CATS_FILE="${KOX_LISTS_DIR}/categories.json"
-    [ -f "$CATS_FILE" ] || _list_fetch_categories_json
-    if command -v jq >/dev/null 2>&1; then
-      SLUGS=$(jq -r '.categories[].slug' "$CATS_FILE")
-    elif command -v python3 >/dev/null 2>&1; then
-      SLUGS=$(python3 -c "import json; d=json.load(open('$CATS_FILE')); print('\n'.join(c['slug'] for c in d['categories']))")
-    else
-      SLUGS=$(grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/\1/')
-    fi
+  # No args: show interactive menu
+  if [ $# -eq 0 ]; then
+    sep; info "${W}Загрузка категорий в туннель${N}  (✓ = уже загружена)"; sep
+    _list_print_menu
+    sep
+    printf "\n  Введите номера или названия через пробел\n"
+    printf "  (например: ${W}1 3 5${N}  или  ${W}telegram youtube${N}  или  ${W}all${N}): "
+    read -r INPUT </dev/tty 2>/dev/null || INPUT=""
+    [ -z "$INPUT" ] && info "Отмена." && return 0
+    set -- $INPUT
+  fi
+
+  # "all" — load everything
+  if [ "$1" = "all" ]; then
+    sep; info "${W}Загружаю все категории...${N}"; sep
+    SLUGS=$(jq -r '.categories[].slug' "$CATS_FILE" 2>/dev/null || \
+            grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/\1/')
     TOTAL_D=0; TOTAL_IP=0
     for S in $SLUGS; do
       _list_fetch_cat "$S" >/dev/null 2>&1
@@ -650,31 +684,53 @@ kox_list_load() {
       D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
       TOTAL_D=$((TOTAL_D+D)); TOTAL_IP=$((TOTAL_IP+I))
       _list_mark_loaded "$S"
+      ok "${S}: +${D}д +${I}ip"
     done
-    ok "Загружено: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
+    sep; ok "Итого: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
   else
-    _list_is_loaded "$SLUG" && { warn "Категория ${W}${SLUG}${N} уже загружена"; return 0; }
-    info "Загружаю: ${W}${SLUG}${N}..."
-    _list_fetch_cat "$SLUG" || { fail "Категория '${SLUG}' не найдена"; return 1; }
-    RES=$(_list_add_entries "$SLUG")
-    D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
-    SD=$(printf '%s' "$RES" | cut -d' ' -f3); SI=$(printf '%s' "$RES" | cut -d' ' -f4)
-    _list_mark_loaded "$SLUG"
-    if [ "$D" -gt 0 ] || [ "$I" -gt 0 ]; then
-      ok "Добавлено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей (уже было: ${SD}д+${SI}ip)"
-    else
-      ok "Категория ${W}${SLUG}${N} загружена (все ${SD}д+${SI}ip уже были в туннеле)"
-    fi
+    # One or more numbers/slugs
+    # Build slug map first (in case user passed numbers)
+    _list_print_menu >/dev/null 2>/dev/null
+    sep; info "${W}Загружаю выбранные категории:${N}"; sep
+    for ARG in "$@"; do
+      SLUG=$(_slug_from_arg "$ARG")
+      if [ -z "$SLUG" ]; then
+        fail "Неизвестный номер или категория: ${ARG}"
+        continue
+      fi
+      _load_one_slug "$SLUG"
+    done
   fi
-  info "Перезапускаю Xray..."
+
+  sep; info "Перезапускаю Xray..."; sep
   "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_list_remove() {
-  SLUG="${1:-}"
-  [ -z "$SLUG" ] && fail "Укажите: kox list-remove <slug> | all" && return 1
-  if [ "$SLUG" = "all" ]; then
-    info "Удаляю все загруженные категории..."
+  CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+  [ -f "$CATS_FILE" ] || _list_fetch_categories_json
+
+  # No args: show interactive menu of loaded categories
+  if [ $# -eq 0 ]; then
+    LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null | grep -v '^$')
+    if [ -z "$LOADED" ]; then warn "Нет загруженных категорий"; return 0; fi
+    sep; info "${W}Загруженные категории:${N}"; sep
+    N=0
+    printf '%s\n' "$LOADED" | while IFS= read -r S; do
+      N=$((N+1))
+      printf "  %2d. ✓ %s\n" "$N" "$S"
+    done
+    sep
+    printf "\n  Введите номера/названия для удаления (или ${W}all${N}): "
+    read -r INPUT </dev/tty 2>/dev/null || INPUT=""
+    [ -z "$INPUT" ] && info "Отмена." && return 0
+    set -- $INPUT
+  fi
+
+  _list_print_menu >/dev/null 2>/dev/null
+
+  if [ "$1" = "all" ]; then
+    sep; info "${W}Удаляю все загруженные категории...${N}"; sep
     TOTAL_D=0; TOTAL_IP=0
     while IFS= read -r S; do
       [ -z "$S" ] && continue
@@ -682,17 +738,23 @@ kox_list_remove() {
       D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
       TOTAL_D=$((TOTAL_D+D)); TOTAL_IP=$((TOTAL_IP+I))
       _list_unmark_loaded "$S"
+      ok "${S}: -${D}д -${I}ip"
     done < "${KOX_LISTS_LOADED:-/dev/null}"
-    ok "Удалено: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
+    ok "Итого удалено: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
   else
-    _list_is_loaded "$SLUG" || { warn "Категория ${W}${SLUG}${N} не загружена"; return 0; }
-    info "Удаляю: ${W}${SLUG}${N}..."
-    RES=$(_list_remove_entries "$SLUG")
-    D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
-    _list_unmark_loaded "$SLUG"
-    ok "Удалено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей"
+    sep; info "${W}Удаляю выбранные категории:${N}"; sep
+    for ARG in "$@"; do
+      SLUG=$(_slug_from_arg "$ARG")
+      [ -z "$SLUG" ] && fail "Неизвестно: ${ARG}" && continue
+      _list_is_loaded "$SLUG" || { warn "${SLUG}: не загружена"; continue; }
+      RES=$(_list_remove_entries "$SLUG")
+      D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+      _list_unmark_loaded "$SLUG"
+      ok "${SLUG}: удалено ${D}д+${I}ip"
+    done
   fi
-  info "Перезапускаю Xray..."
+
+  sep; info "Перезапускаю Xray..."; sep
   "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
