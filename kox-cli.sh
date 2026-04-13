@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.15"
+KOX_VERSION="2026.04.16"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -466,6 +466,36 @@ kox_cron_disable() {
 kox_bot_setup() {
   load_conf
   kox_banner
+
+  # ── Проверка: уже настроен? ──────────────────────────────────────
+  ALREADY_TOKEN="${KOX_BOT_TOKEN:-}"
+  ALREADY_ADMIN="${KOX_ADMIN_ID:-}"
+  if [ -n "$ALREADY_TOKEN" ] && [ -n "$ALREADY_ADMIN" ]; then
+    sep
+    ok "${W}Telegram бот уже настроен!${N}"
+    sep
+    info "Токен: ${W}${ALREADY_TOKEN%%:*}:****${N}"
+    info "Admin ID: ${W}${ALREADY_ADMIN}${N}"
+    sep
+    printf "\n  Хотите сбросить настройки и настроить заново? [y/N]: "
+    read -r RESET_CONFIRM </dev/tty
+    printf "\n"
+    case "$RESET_CONFIRM" in
+      y|Y|yes|YES|д|Д)
+        info "Сбрасываю настройки..."
+        sed -i '/^KOX_BOT_TOKEN=/d' "$KOXCONF" 2>/dev/null
+        sed -i '/^KOX_ADMIN_ID=/d' "$KOXCONF" 2>/dev/null
+        ok "Настройки сброшены"
+        printf "\n"
+        ;;
+      *)
+        info "Отмена. Текущие настройки сохранены."
+        printf "\n"
+        return 0
+        ;;
+    esac
+  fi
+
   sep
   printf " ${W}🤖 Мастер настройки Telegram бота KOX Shield${N}\n"
   sep
@@ -484,48 +514,68 @@ kox_bot_setup() {
   sep
   printf " ${C}Вставьте токен бота сюда:${N} "
   read -r INPUT_TOKEN </dev/tty
+  # Strip any accidental whitespace
+  INPUT_TOKEN=$(printf '%s' "$INPUT_TOKEN" | tr -d ' \t\r\n')
   printf "\n"
 
-  # Validate token format
-  printf '%s' "$INPUT_TOKEN" | grep -qE '^[0-9]{8,12}:[A-Za-z0-9_-]{30,50}$' || {
-    fail "Неверный формат токена. Ожидается: ${Y}1234567890:ABCDefGHI...${N}"
-    printf "\n  Получить токен можно у ${C}@BotFather${N} командой /newbot\n\n"
+  # Validate token format (relaxed: digits:base64url, no strict length)
+  printf '%s' "$INPUT_TOKEN" | grep -qE '^[0-9]+:[A-Za-z0-9_-]+$' || {
+    fail "Неверный формат токена."
+    printf "  Ожидается вид: ${Y}1234567890:ABCDefGHIJKLmnoPQRSTuvwXYZ${N}\n"
+    printf "  Получить токен можно у ${C}@BotFather${N} командой /newbot\n\n"
     return 1
   }
 
-  # Test token with Telegram API
-  info "Проверяю токен..."
-  BOT_INFO=$(curl -fsSL --max-time 10 \
+  # Test token via Telegram API (through VPN proxy like bot does)
+  info "Проверяю токен через Telegram API..."
+  BOT_INFO=$(curl -fsSL -x "socks5h://127.0.0.1:10809" --max-time 10 \
     "https://api.telegram.org/bot${INPUT_TOKEN}/getMe" 2>/dev/null)
-  BOT_OK=$(printf '%s' "$BOT_INFO" | grep -o '"ok":true' || true)
-  if [ -z "$BOT_OK" ]; then
-    fail "Токен недействителен или нет доступа к Telegram"
-    return 1
+  # Fallback: try direct if proxy unavailable (VPN may not be running yet)
+  if [ -z "$BOT_INFO" ]; then
+    BOT_INFO=$(curl -fsSL --max-time 10 \
+      "https://api.telegram.org/bot${INPUT_TOKEN}/getMe" 2>/dev/null)
   fi
+
+  BOT_OK=$(printf '%s' "$BOT_INFO" | grep -o '"ok":true' || true)
   BOT_USERNAME=$(printf '%s' "$BOT_INFO" | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
-  ok "Токен действителен! Бот: ${W}@${BOT_USERNAME}${N}"
+
+  if [ -n "$BOT_OK" ] && [ -n "$BOT_USERNAME" ]; then
+    ok "Токен действителен! Бот: ${W}@${BOT_USERNAME}${N}"
+  else
+    warn "Не удалось проверить токен через API (нет доступа к Telegram)."
+    printf "  Убедитесь, что токен скопирован точно от ${C}@BotFather${N}.\n"
+    printf "  Продолжаем — токен будет проверен при запуске бота.\n\n"
+    BOT_USERNAME=""
+  fi
   printf "\n"
 
   # Save token to kox.conf
-  if [ ! -f "$KOXCONF" ]; then
-    printf 'KOX_BOT_TOKEN="%s"\n' "$INPUT_TOKEN" > "$KOXCONF"
-  elif grep -q 'KOX_BOT_TOKEN' "$KOXCONF"; then
-    sed -i "s|^KOX_BOT_TOKEN=.*|KOX_BOT_TOKEN=\"${INPUT_TOKEN}\"|" "$KOXCONF"
-  else
-    printf '\nKOX_BOT_TOKEN="%s"\n' "$INPUT_TOKEN" >> "$KOXCONF"
-  fi
+  _conf_set() {
+    local KEY="$1" VAL="$2"
+    if [ ! -f "$KOXCONF" ]; then
+      printf '%s="%s"\n' "$KEY" "$VAL" > "$KOXCONF"
+    elif grep -q "^${KEY}=" "$KOXCONF"; then
+      sed -i "s|^${KEY}=.*|${KEY}=\"${VAL}\"|" "$KOXCONF"
+    else
+      printf '\n%s="%s"\n' "$KEY" "$VAL" >> "$KOXCONF"
+    fi
+  }
+  _conf_set "KOX_BOT_TOKEN" "$INPUT_TOKEN"
 
   # ── Шаг 2: Ваш Telegram ID ──────────────────────────────────────
   sep
   printf " ${W}Шаг 2 из 3 — Узнайте ваш Telegram ID${N}\n\n"
-  printf "  Бот будет управляться только вами.\n"
-  printf "  Для этого нужен ваш числовой Telegram ID.\n\n"
-  printf "  Откройте бота ${C}@userinfobot${N} и нажмите /start:\n"
+  printf "  Бот будет управляться только вами — для этого нужен\n"
+  printf "  ваш числовой Telegram ID.\n\n"
+  printf "  ${W}Способ 1:${N} Откройте ${C}@userinfobot${N} и нажмите /start\n"
   printf "  Ссылка: $(hyperlink 'https://t.me/userinfobot' 'https://t.me/userinfobot')\n\n"
-  printf "  Он ответит вашим ID, например: ${Y}108707475${N}\n\n"
+  printf "  ${W}Способ 2:${N} Напишите ${C}/start${N} своему новому боту —\n"
+  printf "  он ответит сообщением с вашим ID.\n\n"
+  printf "  Пример ID: ${Y}108707475${N}\n\n"
   sep
   printf " ${C}Вставьте ваш Telegram ID сюда:${N} "
   read -r INPUT_ADMIN_ID </dev/tty
+  INPUT_ADMIN_ID=$(printf '%s' "$INPUT_ADMIN_ID" | tr -d ' \t\r\n')
   printf "\n"
 
   # Validate numeric ID
@@ -534,16 +584,11 @@ kox_bot_setup() {
     return 1
   }
 
-  # Save admin ID to kox.conf
-  if grep -q 'KOX_ADMIN_ID' "$KOXCONF"; then
-    sed -i "s|^KOX_ADMIN_ID=.*|KOX_ADMIN_ID=\"${INPUT_ADMIN_ID}\"|" "$KOXCONF"
-  else
-    printf '\nKOX_ADMIN_ID="%s"\n' "$INPUT_ADMIN_ID" >> "$KOXCONF"
-  fi
+  _conf_set "KOX_ADMIN_ID" "$INPUT_ADMIN_ID"
   ok "Admin ID сохранён: ${W}${INPUT_ADMIN_ID}${N}"
   printf "\n"
 
-  # Ensure default conf values
+  # Ensure default conf values exist
   for KEY_VAL in \
     'KOX_AUTO_UPGRADE="no"' \
     'KOX_AUTO_LIST_UPDATE="no"' \
@@ -556,16 +601,16 @@ kox_bot_setup() {
 
   # ── Шаг 3: Запуск бота ──────────────────────────────────────────
   sep
-  printf " ${W}Шаг 3 из 3 — Запустите бота${N}\n\n"
+  printf " ${W}Шаг 3 из 3 — Запускаю бота${N}\n\n"
 
   if [ -f "$BOT_INIT" ]; then
     info "Запускаю Telegram бота..."
     "$BOT_INIT" restart >/dev/null 2>&1
-    sleep 2
-    if "$BOT_INIT" status 2>/dev/null | grep -qi 'running\|started\|active'; then
+    sleep 3
+    if pgrep -f kox-bot >/dev/null 2>&1; then
       ok "Бот запущен!"
     else
-      pgrep -f kox-bot >/dev/null 2>&1 && ok "Бот запущен!" || warn "Статус бота неизвестен, проверьте: kox bot"
+      warn "Бот не запустился — проверьте токен командой: ${W}kox bot${N}"
     fi
   else
     warn "init-скрипт бота не найден (${BOT_INIT})"
@@ -574,8 +619,12 @@ kox_bot_setup() {
   printf "\n"
   sep
   printf " ${G}✓  Настройка завершена!${N}\n\n"
-  printf "  Теперь перейдите в вашего бота и нажмите /start:\n"
-  printf "  ${C}https://t.me/${BOT_USERNAME}${N}\n\n"
+  if [ -n "$BOT_USERNAME" ]; then
+    printf "  Перейдите в вашего бота и нажмите ${W}/start${N}:\n"
+    printf "  ${C}https://t.me/${BOT_USERNAME}${N}\n\n"
+  else
+    printf "  Найдите вашего бота в Telegram и нажмите ${W}/start${N}\n\n"
+  fi
   printf "  После этого бот пришлёт главное меню управления.\n\n"
   sep
   printf "\n"
