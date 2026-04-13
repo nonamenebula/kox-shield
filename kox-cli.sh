@@ -70,7 +70,6 @@ kox_help() {
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
   printf "  ${G}kox upgrade${N}          — проверить и установить обновление KOX Shield\n\n"
-  printf "  ${G}kox clear-log${N}        — очистить логи Xray и бота\n\n"
   printf "  ${G}kox bot${N}              — статус Telegram бота\n"
   printf "  ${G}kox admin set <id>${N}   — назначить Telegram-администратора\n"
   printf "  ${G}kox admin show${N}       — показать текущего администратора\n\n"
