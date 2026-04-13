@@ -21,8 +21,8 @@ PROXY="socks5h://127.0.0.1:10809"
 GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 KOX_LISTS_DIR="/opt/etc/xray/lists"
-LISTS_LASTCHECK_FILE="/tmp/kox-lists-lastcheck"
-KOX_LASTCHECK_FILE="/tmp/kox-ver-lastcheck"
+KOX_LASTCHECK_FILE="/opt/etc/xray/.kox-ver-lastcheck"
+LISTS_LASTCHECK_FILE="/opt/etc/xray/.lists-lastcheck"
 CHECK_INTERVAL=21600  # 6 hours
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
@@ -744,38 +744,58 @@ ${UPDATE_OUT}
 
 h_kox_do_upgrade() {
   local CHAT="$1"
+
+  # Dismiss callback spinner immediately
+  [ -n "$CB_ID" ] && api_call "answerCallbackQuery" \
+    "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"Проверяю версию...\"}" >/dev/null 2>&1
+
+  # Prevent double-upgrade via lock file
+  UPGRADE_LOCK="/tmp/kox-upgrading"
+  if [ -f "$UPGRADE_LOCK" ]; then
+    update_menu "$CHAT" "⏳ <b>Обновление уже выполняется...</b>
+
+Подождите, бот скоро перезапустится."
+    return
+  fi
+
   send_typing "$CHAT"
   REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
 
+  # CRITICAL: check if already up to date BEFORE doing anything
+  # This handles replayed callbacks after bot restart
+  CUR_INT=$(printf '%s' "$KOX_VERSION" | tr -d '.')
+  REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  if [ "$REM_INT" -le "$CUR_INT" ] 2>/dev/null; then
+    update_menu "$CHAT" "✅ <b>KOX Shield уже актуален!</b>
+
+Версия: <code>v${KOX_VERSION}</code>
+Обновление не требуется." "$(main_keyboard)"
+    return
+  fi
+
+  # Set lock
+  printf '%s' "$$" > "$UPGRADE_LOCK"
+
   LOADED_CNT=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
 
-  update_menu "$CHAT" "⏳ <b>Обновление KOX Shield до v${REMOTE_VER}...</b>
+  update_menu "$CHAT" "⏳ <b>Обновление KOX Shield v${KOX_VERSION} → v${REMOTE_VER}</b>
 
 Загружаю файлы с GitHub...
 Бот перезапустится через несколько секунд."
 
-  # Run upgrade in background (bot will be restarted by the upgrade script)
-  /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1 &
+  # Save current offset BEFORE triggering restart so callback isn't replayed
+  printf '%s' "$((UPDATE_ID+1))" > "$OFFSET_FILE"
 
-  # If no lists loaded, offer to load them after restart
-  if [ "${LOADED_CNT:-0}" -eq 0 ]; then
-    sleep 3
-    KBD='{"inline_keyboard":[[
-      {"text":"📋 Загрузить все категории","callback_data":"lists_load_all","style":"success"},
-      {"text":"🗂 Выбрать категории","callback_data":"listcats","style":"primary"}
-    ],[
-      {"text":"◀️ В меню","callback_data":"menu"}
-    ]]}'
-    PAYLOAD=$(jq -cn --argjson c "$CHAT" --argjson k "$KBD" \
-      --arg t "🔔 <b>Рекомендация:</b> у вас не загружено ни одной категории доменов!
+  # Run upgrade and redirect to log
+  /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1
 
-Без категорий туннель будет работать только для доменов добавленных вручную.
+  # If we reach here, upgrade failed or bot didn't restart
+  rm -f "$UPGRADE_LOCK"
+  update_menu "$CHAT" "⚠️ <b>Что-то пошло не так.</b>
 
-Загрузить готовые списки прямо сейчас?" \
-      '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
-    api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
-  fi
+Проверьте: <code>kox upgrade</code> в SSH.
+Текущая версия: <code>v${KOX_VERSION}</code>"
 }
 
 h_settings() {
