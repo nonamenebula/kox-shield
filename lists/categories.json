@@ -1,5 +1,5 @@
 {
-  "version": "2026.04.13",
+  "version": "2026.04.14",
   "categories": [
     {
       "slug": "telegram",
@@ -195,9 +195,9 @@
       "name": "GitHub / Dev",
       "emoji": "💻",
       "file": "github-dev.txt",
-      "domains": 16,
+      "domains": 19,
       "cidrs": 0,
-      "total": 16
+      "total": 19
     },
     {
       "slug": "soundcloud",
@@ -252,6 +252,15 @@
       "domains": 0,
       "cidrs": 13,
       "total": 13
+    },
+    {
+      "slug": "supercell",
+      "name": "Supercell (Clash Royale / CoC / Brawl Stars)",
+      "emoji": "🎯",
+      "file": "supercell.txt",
+      "domains": 8,
+      "cidrs": 2,
+      "total": 10
     },
     {
       "slug": "other",

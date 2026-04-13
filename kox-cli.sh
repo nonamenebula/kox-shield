@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.13"
+KOX_VERSION="2026.04.14"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -700,7 +700,7 @@ kox_list_check() {
   info "Проверяю обновления списков..."
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
   REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  if [ -z "$REMOTE_VER" ] || ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
+  if [ -z "$REMOTE_VER" ] || ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]'; then
     fail "Не удалось получить версию списков"; return 1
   fi
   CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
@@ -717,6 +717,7 @@ kox_list_update() {
   mkdir -p "$KOX_LISTS_DIR"
   REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && fail "Нет подключения" && return 1
+  ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]' && fail "Некорректная версия списков" && return 1
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
   CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
   if [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null; then
@@ -750,19 +751,18 @@ kox_clear_log() {
 }
 
 kox_upgrade() {
-  GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
+  FORCE="${1:-}"
+  GITHUB_RAW_UP="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
   info "Проверяю обновления KOX Shield..."
 
-  REMOTE_VERSION=$(curl -fsSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VERSION=$(curl -fsSL --max-time 10 "${GITHUB_RAW_UP}/VERSION" 2>/dev/null | tr -d '[:space:]')
 
-  # Validate: version must match YYYY.MM.DD format
-  if [ -z "$REMOTE_VERSION" ] || ! printf '%s' "$REMOTE_VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'; then
+  if [ -z "$REMOTE_VERSION" ] || ! printf '%s' "$REMOTE_VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
     fail "Не удалось получить версию с GitHub"
     info "Проверьте подключение к интернету"
     return 1
   fi
 
-  # Compare versions: convert YYYY.MM.DD → YYYYMMDD integer
   CUR_INT=$(printf '%s' "$KOX_VERSION"    | tr -d '.')
   REM_INT=$(printf '%s' "$REMOTE_VERSION" | tr -d '.')
 
@@ -774,8 +774,7 @@ kox_upgrade() {
   warn "Доступно обновление: ${W}v${REMOTE_VERSION}${N}  (текущая: v${KOX_VERSION})"
   sep
 
-  # Show changelog for the new version
-  CHANGELOG=$(curl -sSL --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null)
+  CHANGELOG=$(curl -sSL --max-time 10 "${GITHUB_RAW_UP}/CHANGELOG.md" 2>/dev/null)
   if [ -n "$CHANGELOG" ]; then
     info "${W}Что нового в v${REMOTE_VERSION}:${N}"
     printf '%s\n' "$CHANGELOG" | \
@@ -785,17 +784,20 @@ kox_upgrade() {
   fi
 
   sep
-  printf "\n"
-  printf "  Установить обновление? [y/N] "
-  read -r ANSWER </dev/tty 2>/dev/null || ANSWER=""
 
-  case "$ANSWER" in
-    y|Y|yes|YES|д|Д) : ;;
-    *)
-      info "Обновление отменено"
-      return 0
-      ;;
-  esac
+  # --force: skip interactive prompt (called from bot)
+  if [ "$FORCE" != "--force" ]; then
+    printf "\n"
+    printf "  Установить обновление? [y/N] "
+    read -r ANSWER </dev/tty 2>/dev/null || ANSWER=""
+    case "$ANSWER" in
+      y|Y|yes|YES|д|Д) : ;;
+      *)
+        info "Обновление отменено"
+        return 0
+        ;;
+    esac
+  fi
 
   info "Загружаю обновление..."
 
@@ -806,7 +808,7 @@ kox_upgrade() {
   FAIL=0
 
   # kox-cli.sh → /opt/bin/kox
-  if curl -sSL --max-time 30 "${GITHUB_RAW}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
+  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
       && [ -s /tmp/kox-upgrade-cli ]; then
     chmod +x /tmp/kox-upgrade-cli
     mv /tmp/kox-upgrade-cli /opt/bin/kox
@@ -817,18 +819,18 @@ kox_upgrade() {
     FAIL=1
   fi
 
-  # kox-bot.sh → /opt/bin/kox-bot
-  if curl -sSL --max-time 30 "${GITHUB_RAW}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
+  # kox-bot.sh → /opt/etc/xray/kox-bot.sh
+  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
       && [ -s /tmp/kox-upgrade-bot ]; then
     chmod +x /tmp/kox-upgrade-bot
-    mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
+    mv /tmp/kox-upgrade-bot /opt/etc/xray/kox-bot.sh
     ok "kox-bot обновлён"
   else
     warn "Ошибка загрузки kox-bot.sh"
   fi
 
   # S90kox-bot → /opt/etc/init.d/S90kox-bot
-  if curl -sSL --max-time 30 "${GITHUB_RAW}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
+  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
       && [ -s /tmp/kox-upgrade-init ]; then
     chmod +x /tmp/kox-upgrade-init
     mv /tmp/kox-upgrade-init "$BOT_INIT"
@@ -877,7 +879,7 @@ case "$CMD" in
   list-remove)   kox_list_remove "$@" ;;
   list-check)    kox_list_check ;;
   list-update)   kox_list_update ;;
-  upgrade)       kox_upgrade ;;
+  upgrade)       kox_upgrade "$@" ;;
   clear-log)     kox_clear_log ;;
   bot)           kox_bot ;;
   admin)         kox_admin "$@" ;;

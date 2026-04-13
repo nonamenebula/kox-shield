@@ -7,6 +7,9 @@ githubusercontent.com
 githubassets.com
 github.dev
 copilot.github.com
+cursor.com
+cursor.sh
+api2.cursor.sh
 npmjs.com
 npmjs.org
 registry.npmjs.org

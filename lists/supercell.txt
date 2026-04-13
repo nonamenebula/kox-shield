@@ -1,0 +1,13 @@
+# KOX Shield — Supercell (Clash Royale, Clash of Clans, Brawl Stars)
+# domains
+clashroyale.com
+supercell.com
+id.supercell.com
+clashofclans.com
+brawlstars.com
+hayday.com
+boombeach.com
+squadsbusters.com
+# cidrs
+185.7.50.0/24
+185.7.118.0/24

@@ -19,9 +19,11 @@ DOMAIN_MARKER="kox-custom-marker"
 IP_MARKER="192.0.2.255/32"
 PROXY="socks5h://127.0.0.1:10809"
 GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
+GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 KOX_LISTS_DIR="/opt/etc/xray/lists"
 LISTS_LASTCHECK_FILE="/tmp/kox-lists-lastcheck"
-LISTS_CHECK_INTERVAL=21600  # 6 hours
+KOX_LASTCHECK_FILE="/tmp/kox-ver-lastcheck"
+CHECK_INTERVAL=21600  # 6 hours
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
@@ -437,105 +439,228 @@ h_help() {
 
 # ── List update notification helpers ──────────────────────────────────────────
 
-lists_notify_allowed() {
+# ── Conf helpers ──────────────────────────────────────────────────────────────
+
+conf_get() { grep "^${1}=" "$KOXCONF" 2>/dev/null | sed 's/^[^=]*=//;s/^"//;s/"$//' ; }
+
+conf_set() {
+  KEY="$1"; VAL="$2"
+  touch "$KOXCONF"
+  if grep -q "^${KEY}=" "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^${KEY}=.*|${KEY}=\"${VAL}\"|" "$KOXCONF"
+  else
+    printf '%s="%s"\n' "$KEY" "$VAL" >> "$KOXCONF"
+  fi
+}
+
+notify_allowed() {
+  KEY_ON="$1"; KEY_SKIP="$2"
   [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
-  # Completely disabled
-  [ "${KOX_LIST_NOTIFY:-yes}" = "no" ] && return 1
-  # Snooze until timestamp
-  SKIP="${KOX_LIST_NOTIFY_SKIP_UNTIL:-0}"
-  NOW=$(date +%s 2>/dev/null || echo 0)
-  [ "$SKIP" -gt "$NOW" ] 2>/dev/null && return 1
+  VAL=$(conf_get "$KEY_ON"); [ "${VAL:-yes}" = "no" ] && return 1
+  SKIP=$(conf_get "$KEY_SKIP"); NOW=$(date +%s 2>/dev/null || echo 0)
+  [ "${SKIP:-0}" -gt "$NOW" ] 2>/dev/null && return 1
   return 0
 }
 
-lists_set_snooze() {
-  DAYS="$1"
+lists_notify_allowed() { notify_allowed KOX_LIST_NOTIFY KOX_LIST_NOTIFY_SKIP_UNTIL; }
+upgrade_notify_allowed() { notify_allowed KOX_UPGRADE_NOTIFY KOX_UPGRADE_NOTIFY_SKIP_UNTIL; }
+
+snooze() {
+  KEY="$1"; DAYS="$2"
   NOW=$(date +%s 2>/dev/null || echo 0)
-  UNTIL=$((NOW + DAYS * 86400))
-  if grep -q 'KOX_LIST_NOTIFY_SKIP_UNTIL' "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^KOX_LIST_NOTIFY_SKIP_UNTIL=.*|KOX_LIST_NOTIFY_SKIP_UNTIL=\"${UNTIL}\"|" "$KOXCONF"
-  else
-    printf '\nKOX_LIST_NOTIFY_SKIP_UNTIL="%s"\n' "$UNTIL" >> "$KOXCONF"
-  fi
+  conf_set "$KEY" "$((NOW + DAYS * 86400))"
 }
 
-lists_disable_notify() {
-  if grep -q 'KOX_LIST_NOTIFY' "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^KOX_LIST_NOTIFY=.*|KOX_LIST_NOTIFY=\"no\"|" "$KOXCONF"
-  else
-    printf '\nKOX_LIST_NOTIFY="no"\n' >> "$KOXCONF"
-  fi
-}
+lists_set_snooze()   { snooze KOX_LIST_NOTIFY_SKIP_UNTIL "$1"; }
+upgrade_set_snooze() { snooze KOX_UPGRADE_NOTIFY_SKIP_UNTIL "$1"; }
 
-lists_enable_notify() {
-  if grep -q 'KOX_LIST_NOTIFY' "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^KOX_LIST_NOTIFY=.*|KOX_LIST_NOTIFY=\"yes\"|" "$KOXCONF"
-  else
-    printf '\nKOX_LIST_NOTIFY="yes"\n' >> "$KOXCONF"
-  fi
-  if grep -q 'KOX_LIST_NOTIFY_SKIP_UNTIL' "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^KOX_LIST_NOTIFY_SKIP_UNTIL=.*|KOX_LIST_NOTIFY_SKIP_UNTIL=\"0\"|" "$KOXCONF"
-  fi
-}
+lists_disable_notify()   { conf_set KOX_LIST_NOTIFY no; }
+upgrade_disable_notify() { conf_set KOX_UPGRADE_NOTIFY no; }
+lists_enable_notify()    { conf_set KOX_LIST_NOTIFY yes; conf_set KOX_LIST_NOTIFY_SKIP_UNTIL 0; }
+upgrade_enable_notify()  { conf_set KOX_UPGRADE_NOTIFY yes; conf_set KOX_UPGRADE_NOTIFY_SKIP_UNTIL 0; }
 
-check_lists_update() {
-  # Throttle: check only every LISTS_CHECK_INTERVAL seconds
+# ── KOX version update check ──────────────────────────────────────────────────
+
+check_kox_update() {
   NOW=$(date +%s 2>/dev/null || echo 0)
-  LAST=$(cat "$LISTS_LASTCHECK_FILE" 2>/dev/null || echo 0)
-  [ $((NOW - LAST)) -lt "$LISTS_CHECK_INTERVAL" ] && return 0
-  printf '%s' "$NOW" > "$LISTS_LASTCHECK_FILE"
+  LAST=$(cat "$KOX_LASTCHECK_FILE" 2>/dev/null || echo 0)
+  [ $((NOW - LAST)) -lt "$CHECK_INTERVAL" ] && return 0
+  printf '%s' "$NOW" > "$KOX_LASTCHECK_FILE"
 
   [ -z "$ADMIN_ID" ] && return 0
-  lists_notify_allowed || return 0
+  upgrade_notify_allowed || return 0
 
-  LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-
+  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && return 0
-  printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$' || return 0
+  printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}' || return 0
 
-  CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.')
-  REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
-  [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null && return 0
+  LOCAL_VER="$KOX_VERSION"
+  CUR_INT=$(printf '%s' "$LOCAL_VER" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  [ "$REM_INT" -le "$CUR_INT" ] 2>/dev/null && return 0
 
-  # Get changelog for new lists version - what was added
-  CHANGELOG=$(curl -fsSL -x "$PROXY" --max-time 10 \
-    "https://raw.githubusercontent.com/nonamenebula/kox-shield/main/CHANGELOG.md" 2>/dev/null | \
+  # Fetch changelog for this version
+  CHANGELOG=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null | \
     awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" | \
-    grep -i 'список\|categor\|домен\|добавл' | head -5)
+    grep -v '^[[:space:]]*$' | head -6)
 
-  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
-  LOADED_MSG=""
-  [ -n "$LOADED" ] && LOADED_MSG="
-📂 Ваши загруженные категории: $(printf '%s' "$LOADED" | tr '\n' ' ')"
+  # Auto-upgrade if enabled
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  if [ "${KOX_AUTO_UPGRADE:-no}" = "yes" ]; then
+    log "Auto-upgrading KOX to v${REMOTE_VER}..."
+    send_info "$ADMIN_ID" "🔄 <b>KOX Shield обновляется автоматически</b>
 
-  MSG="🔔 <b>Обновление списков доменов!</b>
+Устанавливается версия: <b>v${REMOTE_VER}</b>
+Текущая: <code>v${KOX_VERSION}</code>
 
-Доступна новая версия: <b>v${REMOTE_VER}</b>
-Текущая: <code>${LOCAL_VER:-не установлена}</code>${LOADED_MSG}"
+Бот перезапустится через несколько секунд..."
+    sleep 2
+    /opt/bin/kox upgrade --force >/dev/null 2>&1 &
+    return 0
+  fi
+
+  MSG="🔔 <b>Обновление KOX Shield!</b>
+
+Доступна версия: <b>v${REMOTE_VER}</b>
+Текущая: <code>v${KOX_VERSION}</code>"
 
   [ -n "$CHANGELOG" ] && MSG="${MSG}
 
 📋 <b>Что нового:</b>
-<code>${CHANGELOG}</code>"
+$(printf '%s' "$CHANGELOG" | sed 's/^/• /')"
 
   MSG="${MSG}
 
-Обновить ваши списки доменов?"
+Обновить KOX Shield?"
 
   KBD='{"inline_keyboard":[[
-    {"text":"✅ Обновить сейчас","callback_data":"lists_do_update","style":"success"},
-    {"text":"⏰ Не сегодня","callback_data":"lists_snooze_1","style":"primary"}
+    {"text":"✅ Обновить сейчас","callback_data":"kox_do_upgrade","style":"success"},
+    {"text":"⏰ Не напоминать сегодня","callback_data":"kox_snooze_upgrade_1"}
+  ],[
+    {"text":"📅 Не напоминать месяц","callback_data":"kox_snooze_upgrade_30"},
+    {"text":"🔕 Отключить","callback_data":"kox_upgrade_notify_off","style":"danger"}
+  ]]}'
+
+  PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
+    '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
+  api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
+  log "KOX upgrade notification sent for v${REMOTE_VER}"
+}
+
+_lists_get_new_domains() {
+  # Compare loaded categories: find domains in new remote files not in current ones
+  # Returns multi-line: "category: domain1, domain2, ..."
+  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+  [ -z "$LOADED" ] && return 0
+  printf '%s\n' "$LOADED" | while IFS= read -r S; do
+    [ -z "$S" ] && continue
+    LOCAL_FILE="${KOX_LISTS_DIR}/${S}.txt"
+    NEW_FILE="/tmp/kox-newlist-${S}.txt"
+    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/${S}.txt" -o "$NEW_FILE" 2>/dev/null || continue
+    ADDED=""
+    while IFS= read -r LINE; do
+      case "$LINE" in '#'*|'') continue ;; esac
+      if ! grep -qxF "$LINE" "$LOCAL_FILE" 2>/dev/null; then
+        ADDED="${ADDED}${LINE}, "
+      fi
+    done < "$NEW_FILE"
+    if [ -n "$ADDED" ]; then
+      ADDED=$(printf '%s' "$ADDED" | sed 's/, $//')
+      printf '  • <b>%s</b>: +%s\n' "$S" "$ADDED"
+    fi
+  done
+}
+
+check_lists_update() {
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  LAST=$(cat "$LISTS_LASTCHECK_FILE" 2>/dev/null || echo 0)
+  [ $((NOW - LAST)) -lt "$CHECK_INTERVAL" ] && return 0
+  printf '%s' "$NOW" > "$LISTS_LASTCHECK_FILE"
+
+  [ -z "$ADMIN_ID" ] && return 0
+
+  LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$REMOTE_VER" ] && return 0
+  printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]' || return 0
+
+  CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null && return 0
+
+  # Load conf to check auto-update setting
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+
+  # Build diff of new domains across loaded categories
+  NEW_DOMAINS=$(_lists_get_new_domains)
+
+  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+
+  # Auto-update if enabled
+  if [ "${KOX_AUTO_LIST_UPDATE:-no}" = "yes" ]; then
+    log "Auto-updating lists to v${REMOTE_VER}..."
+    mkdir -p "$KOX_LISTS_DIR"
+    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
+      -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+    if [ -n "$LOADED" ]; then
+      printf '%s\n' "$LOADED" | while IFS= read -r S; do
+        [ -z "$S" ] && continue
+        [ -f "/tmp/kox-newlist-${S}.txt" ] && cp "/tmp/kox-newlist-${S}.txt" "${KOX_LISTS_DIR}/${S}.txt"
+      done
+    fi
+    printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+    MSG="✅ <b>Списки доменов обновлены автоматически!</b>
+
+Версия: <code>v${REMOTE_VER}</code>"
+    [ -n "$NEW_DOMAINS" ] && MSG="${MSG}
+
+📋 <b>Добавлено:</b>
+${NEW_DOMAINS}"
+    MSG="${MSG}
+
+Применить на Xray? (<code>kox list-update</code>)"
+    KBD='{"inline_keyboard":[[{"text":"⚡ Применить сейчас","callback_data":"lists_apply_xray","style":"success"}]]}'
+    PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
+      '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
+    api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
+    return 0
+  fi
+
+  lists_notify_allowed || return 0
+
+  MSG="🔔 <b>Обновление списков доменов!</b>
+
+Доступна новая версия: <code>v${REMOTE_VER}</code>
+Текущая: <code>${LOCAL_VER:-не установлена}</code>"
+
+  if [ -n "$NEW_DOMAINS" ]; then
+    MSG="${MSG}
+
+📋 <b>Что добавлено:</b>
+${NEW_DOMAINS}
+
+Добавить эти домены в исключения тоже?"
+  elif [ -n "$LOADED" ]; then
+    MSG="${MSG}
+
+📂 Загруженные категории: $(printf '%s' "$LOADED" | tr '\n' ' ')
+
+Обновить списки?"
+  else
+    MSG="${MSG}
+
+Обновить индекс категорий?"
+  fi
+
+  KBD='{"inline_keyboard":[[
+    {"text":"✅ Добавить / обновить","callback_data":"lists_do_update","style":"success"},
+    {"text":"⏰ Не сегодня","callback_data":"lists_snooze_1"}
   ],[
     {"text":"📅 Не этот месяц","callback_data":"lists_snooze_30"},
     {"text":"🔕 Отключить","callback_data":"lists_disable_notify","style":"danger"}
   ]]}'
 
-  send_info "$ADMIN_ID" "$MSG"
-  # Also send keyboard as a separate interactive message
   PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
     '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
-  RES=$(api_call "sendMessage" "$PAYLOAD")
+  api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
   log "Lists update notification sent for v${REMOTE_VER}"
 }
 
@@ -577,6 +702,55 @@ h_lists_update() {
 <code>kox list-update</code>
 
 или используйте кнопку ниже."
+}
+
+h_kox_do_upgrade() {
+  local CHAT="$1"
+  send_typing "$CHAT"
+  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
+
+  update_menu "$CHAT" "⏳ <b>Обновление KOX Shield...</b>
+
+Устанавливается версия <code>v${REMOTE_VER}</code>
+Бот перезапустится через несколько секунд..."
+
+  # Run upgrade in background (bot will be restarted by the upgrade script)
+  /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1 &
+}
+
+h_settings() {
+  local CHAT="$1"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+
+  AUTO_UPG="${KOX_AUTO_UPGRADE:-no}";   [ "$AUTO_UPG" = "yes" ] && ICON_UPG="✅ Вкл" || ICON_UPG="❌ Выкл"
+  AUTO_LST="${KOX_AUTO_LIST_UPDATE:-no}"; [ "$AUTO_LST" = "yes" ] && ICON_LST="✅ Вкл" || ICON_LST="❌ Выкл"
+  NTFY_UPG="${KOX_UPGRADE_NOTIFY:-yes}"; [ "$NTFY_UPG" = "yes" ] && ICON_NUPG="🔔 Вкл" || ICON_NUPG="🔕 Выкл"
+  NTFY_LST="${KOX_LIST_NOTIFY:-yes}";    [ "$NTFY_LST" = "yes" ] && ICON_NLST="🔔 Вкл" || ICON_NLST="🔕 Выкл"
+
+  MSG="⚙️ <b>Настройки KOX Shield</b>
+
+🔄 <b>Автообновление KOX</b>: ${ICON_UPG}
+Когда выходит новая версия KOX Shield — устанавливать автоматически.
+
+📋 <b>Автообновление списков</b>: ${ICON_LST}
+Автоматически скачивать новые домены при обнаружении обновлений.
+
+${ICON_NUPG} <b>Уведомления: KOX</b>: ${NTFY_UPG}
+${ICON_NLST} <b>Уведомления: Списки</b>: ${NTFY_LST}"
+
+  KBD=$(jq -cn \
+    --arg iu "$ICON_UPG" --arg il "$ICON_LST" \
+    --arg inu "$ICON_NUPG" --arg inl "$ICON_NLST" \
+    '{"inline_keyboard":[
+      [{"text":("🔄 Автообн. KOX: "+$iu),"callback_data":"toggle_auto_upg"}],
+      [{"text":("📋 Автообн. списков: "+$il),"callback_data":"toggle_auto_lst"}],
+      [{"text":($inu+" уведомл. KOX"),"callback_data":"toggle_notify_upg"},
+       {"text":($inl+" уведомл. списков"),"callback_data":"toggle_notify_lst"}],
+      [{"text":"◀️ Назад","callback_data":"menu"}]
+    ]}')
+
+  update_menu "$CHAT" "$MSG" "$KBD"
 }
 
 h_list_cats() {
@@ -631,7 +805,8 @@ while true; do
     "${API}/getUpdates?offset=${OFFSET}&timeout=30&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D" \
     2>/dev/null)
 
-  # Check for list updates (throttled internally)
+  # Check for KOX Shield and list updates (throttled internally)
+  check_kox_update
   check_lists_update
 
   [ -z "$RESPONSE" ] && sleep 5 && continue
@@ -814,47 +989,82 @@ VPN прервётся примерно на 2 секунды." \
           update_menu "$CHAT_ID" "🔍 Введите домен для проверки:" "$(back_keyboard)"
         fi ;;
 
+      # Settings screen
+      /settings|settings) h_settings "$CHAT_ID" ;;
+
+      toggle_auto_upg)
+        [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+        if [ "${KOX_AUTO_UPGRADE:-no}" = "yes" ]; then conf_set KOX_AUTO_UPGRADE no
+        else conf_set KOX_AUTO_UPGRADE yes; fi
+        h_settings "$CHAT_ID" ;;
+      toggle_auto_lst)
+        [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+        if [ "${KOX_AUTO_LIST_UPDATE:-no}" = "yes" ]; then conf_set KOX_AUTO_LIST_UPDATE no
+        else conf_set KOX_AUTO_LIST_UPDATE yes; fi
+        h_settings "$CHAT_ID" ;;
+      toggle_notify_upg)
+        [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+        if [ "${KOX_UPGRADE_NOTIFY:-yes}" = "yes" ]; then upgrade_disable_notify
+        else upgrade_enable_notify; fi
+        h_settings "$CHAT_ID" ;;
+      toggle_notify_lst)
+        [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+        if [ "${KOX_LIST_NOTIFY:-yes}" = "yes" ]; then lists_disable_notify
+        else lists_enable_notify; fi
+        h_settings "$CHAT_ID" ;;
+
+      # KOX upgrade notification callbacks
+      kox_do_upgrade)  h_kox_do_upgrade "$CHAT_ID" ;;
+      kox_snooze_upgrade_1)
+        upgrade_set_snooze 1
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"⏰ Напомним завтра\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "⏰ <b>Напомним об обновлении KOX завтра</b>" ;;
+      kox_snooze_upgrade_30)
+        upgrade_set_snooze 30
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"📅 Напомним через месяц\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "📅 <b>Отложено на 30 дней</b>" ;;
+      kox_upgrade_notify_off)
+        upgrade_disable_notify
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"🔕 Уведомления отключены\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "🔕 <b>Уведомления об обновлении KOX отключены</b>
+
+Включить: <code>/settings</code> → Уведомления KOX" ;;
+
       # Lists management
       /listcats|listcats) h_list_cats "$CHAT_ID" ;;
       /listupdate|listupdate) h_lists_update "$CHAT_ID" ;;
 
-      # Inline callbacks for lists update notification
       lists_do_update)
         h_lists_update "$CHAT_ID"
-        lists_enable_notify
-        ;;
+        lists_enable_notify ;;
+      lists_apply_xray)
+        send_typing "$CHAT_ID"
+        /opt/bin/kox list-update >/dev/null 2>&1 &
+        update_menu "$CHAT_ID" "⚡ <b>Применяю обновления...</b>
+
+Xray перезапустится через несколько секунд." ;;
       lists_snooze_1)
         lists_set_snooze 1
         api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"⏰ Напомним завтра\"}" >/dev/null 2>&1
-        update_menu "$CHAT_ID" "⏰ <b>Отложено на 1 день</b>
-
-Напомним завтра. Текущие списки продолжают работать."
-        ;;
+        update_menu "$CHAT_ID" "⏰ <b>Отложено на 1 день</b>" ;;
       lists_snooze_30)
         lists_set_snooze 30
         api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"📅 Напомним через месяц\"}" >/dev/null 2>&1
-        update_menu "$CHAT_ID" "📅 <b>Отложено на 30 дней</b>
-
-Не будем напоминать о списках целый месяц."
-        ;;
+        update_menu "$CHAT_ID" "📅 <b>Отложено на 30 дней</b>" ;;
       lists_disable_notify)
         lists_disable_notify
         api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"🔕 Уведомления отключены\"}" >/dev/null 2>&1
-        update_menu "$CHAT_ID" "🔕 <b>Уведомления об обновлении списков отключены</b>
+        update_menu "$CHAT_ID" "🔕 <b>Уведомления о списках отключены</b>
 
-Для включения: отправьте <code>/listnotify on</code>"
-        ;;
+Включить: <code>/settings</code>" ;;
       /listnotify)
-        if [ "$ARG" = "on" ]; then
-          lists_enable_notify
-          update_menu "$CHAT_ID" "🔔 <b>Уведомления об обновлении списков включены</b>"
-        elif [ "$ARG" = "off" ]; then
-          lists_disable_notify
-          update_menu "$CHAT_ID" "🔕 <b>Уведомления об обновлении списков отключены</b>"
+        if [ "$ARG" = "on" ]; then lists_enable_notify
+          update_menu "$CHAT_ID" "🔔 <b>Уведомления о списках включены</b>"
+        elif [ "$ARG" = "off" ]; then lists_disable_notify
+          update_menu "$CHAT_ID" "🔕 <b>Уведомления о списках отключены</b>"
         else
           update_menu "$CHAT_ID" "Использование: <code>/listnotify on</code> или <code>/listnotify off</code>"
-        fi
-        ;;
+        fi ;;
 
       # Maintenance
       do_backup)         h_backup   "$CHAT_ID" ;;
