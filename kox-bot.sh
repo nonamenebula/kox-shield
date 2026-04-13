@@ -927,7 +927,7 @@ h_clean_legacy_confirm() {
   answer_cb "$CB_ID" "Удаляю..."
   update_menu "$CHAT" "⏳ <b>Выполняю очистку...</b>"
 
-  OUT=$(/opt/bin/kox clean-legacy <<< "y" 2>&1 | tail -20)
+  OUT=$(/opt/bin/kox clean-legacy --force 2>&1 | tail -20)
 
   update_menu "$CHAT" "✅ <b>Очистка завершена!</b>
 

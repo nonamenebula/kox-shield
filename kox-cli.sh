@@ -465,6 +465,9 @@ kox_cron_disable() {
 }
 
 kox_clean_legacy() {
+  FORCE_MODE=false
+  [ "${1:-}" = "--force" ] && FORCE_MODE=true
+
   kox_banner
   sep
   printf " ${W}🧹 Очистка устаревших VPN-решений${N}\n"
@@ -534,13 +537,17 @@ kox_clean_legacy() {
   fi
 
   sep
-  printf " ${W}Найдено устаревшее ПО. Удалить всё? [y/N]:${N} "
-  read -r CONFIRM </dev/tty
-  printf "\n"
-  case "$CONFIRM" in
-    y|Y|yes|YES|д|Д) : ;;
-    *) info "Отмена. Ничего не изменено."; return 0 ;;
-  esac
+  if $FORCE_MODE; then
+    info "Режим --force: удаляю без подтверждения"
+  else
+    printf " ${W}Найдено устаревшее ПО. Удалить всё? [y/N]:${N} "
+    read -r CONFIRM </dev/tty
+    printf "\n"
+    case "$CONFIRM" in
+      y|Y|yes|YES|д|Д) : ;;
+      *) info "Отмена. Ничего не изменено."; return 0 ;;
+    esac
+  fi
 
   sep
   printf " ${W}Удаляю...${N}\n\n"
