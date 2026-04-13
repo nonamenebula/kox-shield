@@ -530,10 +530,11 @@ kox_upgrade() {
   GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
   info "Проверяю обновления KOX Shield..."
 
-  REMOTE_VERSION=$(curl -sSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VERSION=$(curl -fsSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
 
-  if [ -z "$REMOTE_VERSION" ]; then
-    fail "Не удалось получить информацию об обновлениях"
+  # Validate: version must match YYYY.MM.DD format
+  if [ -z "$REMOTE_VERSION" ] || ! printf '%s' "$REMOTE_VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'; then
+    fail "Не удалось получить версию с GitHub"
     info "Проверьте подключение к интернету"
     return 1
   fi
