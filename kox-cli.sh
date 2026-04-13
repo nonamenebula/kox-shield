@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.17"
+KOX_VERSION="2026.04.18"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -74,6 +74,7 @@ kox_help() {
   printf "  ${G}kox list-remove all${N}            — удалить все категории\n"
   printf "  ${G}kox list-check${N}                 — проверить обновления\n"
   printf "  ${G}kox list-update${N}                — обновить списки с GitHub\n\n"
+  printf "  ${G}kox clean-legacy${N}     — удалить старые VPN (Kvass, Shadowsocks, SOCKS)\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
@@ -461,6 +462,159 @@ kox_cron_enable() {
 kox_cron_disable() {
   crontab -l 2>/dev/null | grep -v kox-update | crontab -
   ok "Авто-обновление отключено"
+}
+
+kox_clean_legacy() {
+  kox_banner
+  sep
+  printf " ${W}🧹 Очистка устаревших VPN-решений${N}\n"
+  sep
+  printf "\n"
+  info "Сканирую роутер..."
+  printf "\n"
+
+  FOUND_ANY=false
+
+  # ── Detect ───────────────────────────────────────────────────────
+  FOUND_KVAS=false
+  if [ -f /opt/etc/init.d/S96kvas ] || [ -f /opt/bin/kvas ] || [ -d /opt/apps/kvas ]; then
+    FOUND_KVAS=true; FOUND_ANY=true
+    warn "Найден: ${R}Kvass (KVAS)${N} — старый VPN через SOCKS"
+  fi
+
+  FOUND_SS=false
+  if [ -f /opt/etc/init.d/S22shadowsocks ] || pgrep -x ss-redir >/dev/null 2>&1 || pgrep -x ss-local >/dev/null 2>&1; then
+    FOUND_SS=true; FOUND_ANY=true
+    warn "Найден: ${Y}Shadowsocks${N}"
+  fi
+
+  FOUND_SINGBOX=false
+  if [ -f /opt/sbin/sing-box ] && pgrep -x sing-box >/dev/null 2>&1; then
+    FOUND_SINGBOX=true; FOUND_ANY=true
+    warn "Найден: ${Y}sing-box${N} (запущен)"
+  fi
+
+  # Detect stray SOCKS iptables rules (port 1080 or 1181, not our 10808)
+  FOUND_IPT=false
+  if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -qE 'REDIRECT.*:1(080|181|090)'; then
+    FOUND_IPT=true; FOUND_ANY=true
+    warn "Найдены: старые правила iptables (SOCKS port 1080/1181)"
+  fi
+
+  # Detect Keenetic SOCKS interfaces (type=Socks in ndmc)
+  FOUND_SOCKS_IF=false
+  SOCKS_IFACE_LIST=""
+  if command -v ndmc >/dev/null 2>&1; then
+    SOCKS_IFACE_LIST=$(ndmc -c 'show interface' 2>/dev/null | awk '
+      /^Interface, name =/ { iface=$4; gsub(/"/, "", iface) }
+      /type: Socks/         { print iface }
+    ')
+    if [ -n "$SOCKS_IFACE_LIST" ]; then
+      FOUND_SOCKS_IF=true; FOUND_ANY=true
+      warn "Найдены: SOCKS-интерфейсы Keenetic:"
+      printf '%s\n' "$SOCKS_IFACE_LIST" | while read -r IF; do
+        printf "    ${Y}→ %s${N}\n" "$IF"
+      done
+    fi
+  fi
+
+  # Check for old dnsmasq socks configs
+  FOUND_DNS=false
+  if ls /opt/etc/dnsmasq.d/kvas*.conf /opt/etc/kvas.dnsmasq 2>/dev/null | grep -q .; then
+    FOUND_DNS=true; FOUND_ANY=true
+    warn "Найдены: старые DNS-правила KVAS"
+  fi
+
+  printf "\n"
+
+  if ! $FOUND_ANY; then
+    ok "Устаревших VPN-решений не найдено — роутер чистый!"
+    sep
+    return 0
+  fi
+
+  sep
+  printf " ${W}Найдено устаревшее ПО. Удалить всё? [y/N]:${N} "
+  read -r CONFIRM </dev/tty
+  printf "\n"
+  case "$CONFIRM" in
+    y|Y|yes|YES|д|Д) : ;;
+    *) info "Отмена. Ничего не изменено."; return 0 ;;
+  esac
+
+  sep
+  printf " ${W}Удаляю...${N}\n\n"
+
+  # ── Clean Kvass ──────────────────────────────────────────────────
+  if $FOUND_KVAS; then
+    info "Останавливаю Kvass..."
+    /opt/etc/init.d/S96kvas stop 2>/dev/null; sleep 1
+    /opt/bin/opkg remove kvas 2>/dev/null || true
+    rm -f /opt/etc/init.d/S96kvas \
+          /opt/etc/ndm/iflayerchanged.d/kvas-ips-reset \
+          /opt/etc/ndm/ifdestroyed.d/kvas-iface-del \
+          /opt/etc/ndm/ifcreated.d/kvas-iface-add \
+          /opt/etc/ndm/netfilter.d/kvas-nat.sh \
+          /opt/etc/cron.5mins/ipset.kvas \
+          /opt/etc/dnsmasq.d/kvas.dnsmasq \
+          /opt/etc/kvas.dnsmasq \
+          /opt/bin/kvas \
+          /opt/etc/kvas.conf \
+          /opt/etc/kvas.list 2>/dev/null
+    rm -rf /opt/apps/kvas /opt/etc/.kvas 2>/dev/null
+    iptables -t nat -D PREROUTING -i br0 -p tcp -m set --match-set unblock dst -j REDIRECT --to-ports 1181 2>/dev/null || true
+    ipset destroy unblock 2>/dev/null || true
+    ok "Kvass удалён"
+  fi
+
+  # ── Clean Shadowsocks ────────────────────────────────────────────
+  if $FOUND_SS; then
+    info "Останавливаю Shadowsocks..."
+    sed -i 's/^ENABLED=yes/ENABLED=no/' /opt/etc/init.d/S22shadowsocks 2>/dev/null || true
+    /opt/etc/init.d/S22shadowsocks stop 2>/dev/null || true
+    killall ss-redir ss-local 2>/dev/null || true
+    ok "Shadowsocks отключён"
+  fi
+
+  # ── Clean sing-box ───────────────────────────────────────────────
+  if $FOUND_SINGBOX; then
+    info "Останавливаю sing-box..."
+    killall sing-box 2>/dev/null || true
+    ok "sing-box остановлен"
+  fi
+
+  # ── Clean old iptables rules ─────────────────────────────────────
+  if $FOUND_IPT; then
+    info "Удаляю старые правила iptables..."
+    for PORT in 1080 1081 1090 1181; do
+      iptables -t nat -D PREROUTING -j REDIRECT --to-ports $PORT 2>/dev/null || true
+      iptables -t nat -D PREROUTING -p tcp -j REDIRECT --to-ports $PORT 2>/dev/null || true
+    done
+    ok "Старые правила iptables удалены"
+  fi
+
+  # ── Clean old DNS rules ──────────────────────────────────────────
+  if $FOUND_DNS; then
+    rm -f /opt/etc/dnsmasq.d/kvas*.conf /opt/etc/kvas.dnsmasq 2>/dev/null
+    /opt/etc/init.d/S56dnsmasq restart 2>/dev/null || true
+    ok "Старые DNS-правила удалены"
+  fi
+
+  # ── Remove Keenetic SOCKS interfaces ────────────────────────────
+  if $FOUND_SOCKS_IF; then
+    info "Удаляю SOCKS-интерфейсы Keenetic..."
+    printf '%s\n' "$SOCKS_IFACE_LIST" | while read -r IF; do
+      [ -z "$IF" ] && continue
+      ndmc -c "no interface ${IF}" 2>/dev/null && ok "Удалён интерфейс: ${IF}" || warn "Не удалось удалить: ${IF} (сделайте вручную в веб-интерфейсе)"
+    done
+  fi
+
+  printf "\n"
+  sep
+  ok "${W}Очистка завершена!${N}"
+  info "Рекомендуется перезапустить роутер: ${W}reboot${N}"
+  sep
+  printf "\n"
 }
 
 kox_bot_setup() {
@@ -1130,6 +1284,7 @@ case "$CMD" in
   list-check)    kox_list_check ;;
   list-update)   kox_list_update ;;
   upgrade)       kox_upgrade "$@" ;;
+  clean-legacy)  kox_clean_legacy ;;
   clear-log)     kox_clear_log ;;
   bot-setup)     kox_bot_setup ;;
   bot)           kox_bot ;;

@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.04.17"
+KOX_VERSION="2026.04.18"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -853,10 +853,70 @@ ${ICON_NLST} <b>Уведомления: Списки</b>: ${NTFY_LST}"
       [{"text":("📋 Автообн. списков: "+$il),"callback_data":"toggle_auto_lst"}],
       [{"text":($inu+" уведомл. KOX"),"callback_data":"toggle_notify_upg"},
        {"text":($inl+" уведомл. списков"),"callback_data":"toggle_notify_lst"}],
+      [{"text":"🧹 Удалить старый VPN (KVAS/SOCKS)","callback_data":"clean_legacy"}],
       [{"text":"◀️ Назад","callback_data":"menu"}]
     ]}')
 
   update_menu "$CHAT" "$MSG" "$KBD"
+}
+
+h_clean_legacy() {
+  local CHAT="$1"
+  answer_cb "$CB_ID" "Сканирую роутер..."
+  send_typing "$CHAT"
+
+  # Run detection
+  FOUND_KVAS=false;   [ -f /opt/etc/init.d/S96kvas ] || [ -f /opt/bin/kvas ] || [ -d /opt/apps/kvas ] && FOUND_KVAS=true
+  FOUND_SS=false;     { [ -f /opt/etc/init.d/S22shadowsocks ] || pgrep -x ss-redir >/dev/null 2>&1; } && FOUND_SS=true
+  FOUND_SB=false;     { [ -f /opt/sbin/sing-box ] && pgrep -x sing-box >/dev/null 2>&1; } && FOUND_SB=true
+  FOUND_IPT=false;    iptables -t nat -L PREROUTING -n 2>/dev/null | grep -qE 'REDIRECT.*:1(080|181|090)' && FOUND_IPT=true
+
+  SOCKS_IFACES=""
+  if command -v ndmc >/dev/null 2>&1; then
+    SOCKS_IFACES=$(ndmc -c 'show interface' 2>/dev/null | awk '
+      /^Interface, name =/ { iface=$4; gsub(/"/, "", iface) }
+      /type: Socks/         { print iface }
+    ')
+  fi
+
+  FOUND_ANY=false
+  REPORT=""
+  $FOUND_KVAS  && FOUND_ANY=true && REPORT="${REPORT}❌ Kvass (KVAS)\n"
+  $FOUND_SS    && FOUND_ANY=true && REPORT="${REPORT}❌ Shadowsocks\n"
+  $FOUND_SB    && FOUND_ANY=true && REPORT="${REPORT}❌ sing-box\n"
+  $FOUND_IPT   && FOUND_ANY=true && REPORT="${REPORT}❌ Старые iptables SOCKS-правила\n"
+  [ -n "$SOCKS_IFACES" ] && FOUND_ANY=true && REPORT="${REPORT}❌ SOCKS-интерфейсы Keenetic: $(printf '%s' "$SOCKS_IFACES" | tr '\n' ' ')\n"
+
+  if ! $FOUND_ANY; then
+    update_menu "$CHAT" "✅ <b>Роутер чистый!</b>
+
+Устаревших VPN-решений (Kvass, Shadowsocks, SOCKS) не найдено."
+    return
+  fi
+
+  KBD='{"inline_keyboard":[[
+    {"text":"🗑 Удалить всё найденное","callback_data":"clean_legacy_confirm"},
+    {"text":"❌ Отмена","callback_data":"settings"}
+  ]]}'
+
+  update_menu "$CHAT" "🔍 <b>Найдено устаревшее ПО:</b>
+
+$(printf '%b' "$REPORT")
+Удалить всё и очистить правила?" "$KBD"
+}
+
+h_clean_legacy_confirm() {
+  local CHAT="$1"
+  answer_cb "$CB_ID" "Удаляю..."
+  update_menu "$CHAT" "⏳ <b>Выполняю очистку...</b>"
+
+  OUT=$(/opt/bin/kox clean-legacy <<< "y" 2>&1 | tail -20)
+
+  update_menu "$CHAT" "✅ <b>Очистка завершена!</b>
+
+<pre>$(printf '%s' "$OUT" | sed 's/\x1B\[[0-9;]*m//g' | tail -10)</pre>
+
+Рекомендуется перезагрузить роутер."
 }
 
 h_list_cats() {
@@ -1117,6 +1177,10 @@ VPN прервётся примерно на 2 секунды." \
         if [ "${KOX_LIST_NOTIFY:-yes}" = "yes" ]; then lists_disable_notify
         else lists_enable_notify; fi
         h_settings "$CHAT_ID" ;;
+
+      # Legacy cleanup
+      clean_legacy)         h_clean_legacy "$CHAT_ID" ;;
+      clean_legacy_confirm) h_clean_legacy_confirm "$CHAT_ID" ;;
 
       # KOX upgrade notification callbacks
       kox_do_upgrade)  h_kox_do_upgrade "$CHAT_ID" ;;
