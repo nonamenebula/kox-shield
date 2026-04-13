@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.04.13"
+KOX_VERSION="2026.04.14"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -18,6 +18,10 @@ XRAY_INIT="/opt/etc/init.d/S24xray"
 DOMAIN_MARKER="kox-custom-marker"
 IP_MARKER="192.0.2.255/32"
 PROXY="socks5h://127.0.0.1:10809"
+GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
+KOX_LISTS_DIR="/opt/etc/xray/lists"
+LISTS_LASTCHECK_FILE="/tmp/kox-lists-lastcheck"
+LISTS_CHECK_INTERVAL=21600  # 6 hours
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
@@ -431,6 +435,183 @@ h_help() {
 🔗 <a href=\"https://t.me/PrivateProxyKox\">t.me/PrivateProxyKox</a>"
 }
 
+# ── List update notification helpers ──────────────────────────────────────────
+
+lists_notify_allowed() {
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  # Completely disabled
+  [ "${KOX_LIST_NOTIFY:-yes}" = "no" ] && return 1
+  # Snooze until timestamp
+  SKIP="${KOX_LIST_NOTIFY_SKIP_UNTIL:-0}"
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  [ "$SKIP" -gt "$NOW" ] 2>/dev/null && return 1
+  return 0
+}
+
+lists_set_snooze() {
+  DAYS="$1"
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  UNTIL=$((NOW + DAYS * 86400))
+  if grep -q 'KOX_LIST_NOTIFY_SKIP_UNTIL' "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^KOX_LIST_NOTIFY_SKIP_UNTIL=.*|KOX_LIST_NOTIFY_SKIP_UNTIL=\"${UNTIL}\"|" "$KOXCONF"
+  else
+    printf '\nKOX_LIST_NOTIFY_SKIP_UNTIL="%s"\n' "$UNTIL" >> "$KOXCONF"
+  fi
+}
+
+lists_disable_notify() {
+  if grep -q 'KOX_LIST_NOTIFY' "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^KOX_LIST_NOTIFY=.*|KOX_LIST_NOTIFY=\"no\"|" "$KOXCONF"
+  else
+    printf '\nKOX_LIST_NOTIFY="no"\n' >> "$KOXCONF"
+  fi
+}
+
+lists_enable_notify() {
+  if grep -q 'KOX_LIST_NOTIFY' "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^KOX_LIST_NOTIFY=.*|KOX_LIST_NOTIFY=\"yes\"|" "$KOXCONF"
+  else
+    printf '\nKOX_LIST_NOTIFY="yes"\n' >> "$KOXCONF"
+  fi
+  if grep -q 'KOX_LIST_NOTIFY_SKIP_UNTIL' "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^KOX_LIST_NOTIFY_SKIP_UNTIL=.*|KOX_LIST_NOTIFY_SKIP_UNTIL=\"0\"|" "$KOXCONF"
+  fi
+}
+
+check_lists_update() {
+  # Throttle: check only every LISTS_CHECK_INTERVAL seconds
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  LAST=$(cat "$LISTS_LASTCHECK_FILE" 2>/dev/null || echo 0)
+  [ $((NOW - LAST)) -lt "$LISTS_CHECK_INTERVAL" ] && return 0
+  printf '%s' "$NOW" > "$LISTS_LASTCHECK_FILE"
+
+  [ -z "$ADMIN_ID" ] && return 0
+  lists_notify_allowed || return 0
+
+  LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+
+  [ -z "$REMOTE_VER" ] && return 0
+  printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$' || return 0
+
+  CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.')
+  REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null && return 0
+
+  # Get changelog for new lists version - what was added
+  CHANGELOG=$(curl -fsSL -x "$PROXY" --max-time 10 \
+    "https://raw.githubusercontent.com/nonamenebula/kox-shield/main/CHANGELOG.md" 2>/dev/null | \
+    awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" | \
+    grep -i 'список\|categor\|домен\|добавл' | head -5)
+
+  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+  LOADED_MSG=""
+  [ -n "$LOADED" ] && LOADED_MSG="
+📂 Ваши загруженные категории: $(printf '%s' "$LOADED" | tr '\n' ' ')"
+
+  MSG="🔔 <b>Обновление списков доменов!</b>
+
+Доступна новая версия: <b>v${REMOTE_VER}</b>
+Текущая: <code>${LOCAL_VER:-не установлена}</code>${LOADED_MSG}"
+
+  [ -n "$CHANGELOG" ] && MSG="${MSG}
+
+📋 <b>Что нового:</b>
+<code>${CHANGELOG}</code>"
+
+  MSG="${MSG}
+
+Обновить ваши списки доменов?"
+
+  KBD='{"inline_keyboard":[[
+    {"text":"✅ Обновить сейчас","callback_data":"lists_do_update","style":"success"},
+    {"text":"⏰ Не сегодня","callback_data":"lists_snooze_1","style":"primary"}
+  ],[
+    {"text":"📅 Не этот месяц","callback_data":"lists_snooze_30"},
+    {"text":"🔕 Отключить","callback_data":"lists_disable_notify","style":"danger"}
+  ]]}'
+
+  send_info "$ADMIN_ID" "$MSG"
+  # Also send keyboard as a separate interactive message
+  PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
+    '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
+  RES=$(api_call "sendMessage" "$PAYLOAD")
+  log "Lists update notification sent for v${REMOTE_VER}"
+}
+
+h_lists_update() {
+  local CHAT="$1"
+  send_typing "$CHAT"
+  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
+
+  # Download categories.json
+  mkdir -p "$KOX_LISTS_DIR"
+  curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
+    -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+
+  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+  if [ -z "$LOADED" ]; then
+    printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+    update_menu "$CHAT" "✅ <b>Индекс категорий обновлён</b>
+
+Версия: <code>v${REMOTE_VER}</code>
+Загруженных категорий нет — используйте /listcats для выбора."
+    return
+  fi
+
+  UPDATED=""
+  printf '%s\n' "$LOADED" | while IFS= read -r S; do
+    [ -z "$S" ] && continue
+    curl -fsSL -x "$PROXY" --max-time 15 "${GITHUB_LISTS}/${S}.txt" \
+      -o "${KOX_LISTS_DIR}/${S}.txt" 2>/dev/null
+    UPDATED="${UPDATED}✅ ${S}\n"
+  done
+  printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+
+  update_menu "$CHAT" "✅ <b>Списки обновлены!</b>
+
+Версия: <code>v${REMOTE_VER}</code>
+
+Файлы категорий загружены. Для применения выполните:
+<code>kox list-update</code>
+
+или используйте кнопку ниже."
+}
+
+h_list_cats() {
+  local CHAT="$1"
+  send_typing "$CHAT"
+  CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+  if [ ! -f "$CATS_FILE" ]; then
+    mkdir -p "$KOX_LISTS_DIR"
+    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
+      -o "$CATS_FILE" 2>/dev/null
+  fi
+  [ ! -f "$CATS_FILE" ] && update_menu "$CHAT" "❌ Не удалось загрузить список категорий" && return
+
+  LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
+  CATS_TEXT=$(jq -r '.categories[] | "\(.emoji) \(.name) (\(.total)) — \(.slug)"' "$CATS_FILE" 2>/dev/null | \
+    while IFS= read -r LINE; do
+      SLUG=$(printf '%s' "$LINE" | awk -F' — ' '{print $NF}')
+      if printf '%s' "$LOADED" | grep -qx "$SLUG"; then
+        printf '✓ %s\n' "$LINE"
+      else
+        printf '  %s\n' "$LINE"
+      fi
+    done)
+
+  send_info "$CHAT" "📋 <b>Категории доменов KOX Shield:</b>
+
+<pre>${CATS_TEXT}</pre>
+
+✓ — загружена на роутер
+
+Для загрузки: <code>kox list-load &lt;slug&gt;</code>
+Для всех:    <code>kox list-load all</code>"
+  update_menu "$CHAT" "📋 Список категорий отправлен выше"
+}
+
 # ── Main polling loop ─────────────────────────────────────────────────────────
 # Register bot commands on start (shows "/" menu in Telegram)
 setup_commands
@@ -449,6 +630,9 @@ while true; do
   RESPONSE=$(curl -s -m 35 -x "$PROXY" \
     "${API}/getUpdates?offset=${OFFSET}&timeout=30&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D" \
     2>/dev/null)
+
+  # Check for list updates (throttled internally)
+  check_lists_update
 
   [ -z "$RESPONSE" ] && sleep 5 && continue
 
@@ -629,6 +813,48 @@ VPN прервётся примерно на 2 секунды." \
           printf '%s' "check|${CHAT_ID}" > "$WAIT_FILE"
           update_menu "$CHAT_ID" "🔍 Введите домен для проверки:" "$(back_keyboard)"
         fi ;;
+
+      # Lists management
+      /listcats|listcats) h_list_cats "$CHAT_ID" ;;
+      /listupdate|listupdate) h_lists_update "$CHAT_ID" ;;
+
+      # Inline callbacks for lists update notification
+      lists_do_update)
+        h_lists_update "$CHAT_ID"
+        lists_enable_notify
+        ;;
+      lists_snooze_1)
+        lists_set_snooze 1
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"⏰ Напомним завтра\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "⏰ <b>Отложено на 1 день</b>
+
+Напомним завтра. Текущие списки продолжают работать."
+        ;;
+      lists_snooze_30)
+        lists_set_snooze 30
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"📅 Напомним через месяц\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "📅 <b>Отложено на 30 дней</b>
+
+Не будем напоминать о списках целый месяц."
+        ;;
+      lists_disable_notify)
+        lists_disable_notify
+        api_call "answerCallbackQuery" "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"🔕 Уведомления отключены\"}" >/dev/null 2>&1
+        update_menu "$CHAT_ID" "🔕 <b>Уведомления об обновлении списков отключены</b>
+
+Для включения: отправьте <code>/listnotify on</code>"
+        ;;
+      /listnotify)
+        if [ "$ARG" = "on" ]; then
+          lists_enable_notify
+          update_menu "$CHAT_ID" "🔔 <b>Уведомления об обновлении списков включены</b>"
+        elif [ "$ARG" = "off" ]; then
+          lists_disable_notify
+          update_menu "$CHAT_ID" "🔕 <b>Уведомления об обновлении списков отключены</b>"
+        else
+          update_menu "$CHAT_ID" "Использование: <code>/listnotify on</code> или <code>/listnotify off</code>"
+        fi
+        ;;
 
       # Maintenance
       do_backup)         h_backup   "$CHAT_ID" ;;

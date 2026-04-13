@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.04.13"
+KOX_VERSION="2026.04.14"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -66,6 +66,11 @@ kox_help() {
   printf "  ${G}kox clear-log${N}        — очистить логи\n\n"
   printf "  ${G}kox backup${N}           — создать резервную копию\n"
   printf "  ${G}kox restore [файл]${N}   — восстановить из бэкапа\n\n"
+  printf "  ${G}kox list-cats${N}                   — список категорий доменов\n"
+  printf "  ${G}kox list-load <slug|all>${N}       — загрузить категорию в туннель\n"
+  printf "  ${G}kox list-remove <slug|all>${N}     — удалить категорию из туннеля\n"
+  printf "  ${G}kox list-check${N}                 — проверить обновления списков\n"
+  printf "  ${G}kox list-update${N}                — обновить списки с GitHub\n\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
@@ -518,6 +523,206 @@ kox_admin() {
   esac
 }
 
+KOX_LISTS_DIR="/opt/etc/xray/lists"
+KOX_LISTS_LOADED="/opt/etc/xray/kox-lists-loaded.conf"
+GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
+
+_list_is_loaded() { grep -qx "$1" "$KOX_LISTS_LOADED" 2>/dev/null; }
+_list_mark_loaded() {
+  touch "$KOX_LISTS_LOADED"
+  grep -qx "$1" "$KOX_LISTS_LOADED" 2>/dev/null || printf '%s\n' "$1" >> "$KOX_LISTS_LOADED"
+}
+_list_unmark_loaded() {
+  [ -f "$KOX_LISTS_LOADED" ] && grep -v "^${1}$" "$KOX_LISTS_LOADED" > /tmp/kox-ll.tmp && mv /tmp/kox-ll.tmp "$KOX_LISTS_LOADED"
+}
+_list_fetch_cat() {
+  mkdir -p "$KOX_LISTS_DIR"
+  curl -fsSL --max-time 15 "${GITHUB_LISTS}/${1}.txt" -o "${KOX_LISTS_DIR}/${1}.txt" 2>/dev/null
+}
+_list_fetch_categories_json() {
+  mkdir -p "$KOX_LISTS_DIR"
+  curl -fsSL --max-time 10 "${GITHUB_LISTS}/categories.json" -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+}
+
+_list_add_entries() {
+  SLUG="$1"; FILE="${KOX_LISTS_DIR}/${SLUG}.txt"
+  [ -f "$FILE" ] || { fail "Файл ${SLUG}.txt не найден"; return 1; }
+  APPLIED="${KOX_LISTS_DIR}/.applied-${SLUG}"
+  printf '' > "$APPLIED"
+  ADDED_D=0; ADDED_IP=0
+  while IFS= read -r LINE; do
+    case "$LINE" in '#'*|'') continue ;; esac
+    if printf '%s' "$LINE" | grep -qE '^[0-9a-f:]+.*\/[0-9]+$'; then
+      if ! grep -qF "\"${LINE}\"" "$CONF" 2>/dev/null && grep -q "$IP_MARKER" "$CONF"; then
+        awk -v ip="$LINE" -v m="$IP_MARKER" 'index($0,m)>0{print "          \""ip"\","}{print}' \
+          "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
+        printf 'cidr:%s\n' "$LINE" >> "$APPLIED"; ADDED_IP=$((ADDED_IP+1))
+      fi
+    else
+      if ! grep -qF "\"domain:${LINE}\"" "$CONF" 2>/dev/null && grep -q "$DOMAIN_MARKER" "$CONF"; then
+        awk -v d="$LINE" -v m="$DOMAIN_MARKER" 'index($0,m)>0{print "          \"domain:"d"\","}{print}' \
+          "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
+        printf 'domain:%s\n' "$LINE" >> "$APPLIED"; ADDED_D=$((ADDED_D+1))
+      fi
+    fi
+  done < "$FILE"
+  printf '%d %d' "$ADDED_D" "$ADDED_IP"
+}
+
+_list_remove_entries() {
+  SLUG="$1"; APPLIED="${KOX_LISTS_DIR}/.applied-${SLUG}"
+  [ -f "$APPLIED" ] || { warn "Нет данных для ${SLUG}"; return 0; }
+  REM_D=0; REM_IP=0
+  while IFS= read -r ENTRY; do
+    case "$ENTRY" in
+      domain:*) DOM="${ENTRY#domain:}"
+        grep -vF "\"domain:${DOM}\"" "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
+        REM_D=$((REM_D+1)) ;;
+      cidr:*)   IP="${ENTRY#cidr:}"
+        grep -vF "\"${IP}\"" "$CONF" > /tmp/kox-c.tmp && mv /tmp/kox-c.tmp "$CONF"
+        REM_IP=$((REM_IP+1)) ;;
+    esac
+  done < "$APPLIED"
+  rm -f "$APPLIED"
+  printf '%d %d' "$REM_D" "$REM_IP"
+}
+
+kox_list_cats() {
+  sep; info "${W}Категории доменов KOX Shield:${N}"; sep
+  CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+  if [ ! -f "$CATS_FILE" ]; then
+    info "Загружаю список категорий..."; _list_fetch_categories_json || { fail "Нет подключения"; return 1; }
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
+    python3 - "$CATS_FILE" "$LOADED" << 'PY'
+import sys, json
+cats_file = sys.argv[1]
+loaded = sys.argv[2].split('\n') if len(sys.argv) > 2 and sys.argv[2] else []
+with open(cats_file) as f:
+    data = json.load(f)
+for c in data['categories']:
+    status = "✓" if c['slug'] in loaded else " "
+    cnt = f"{c['domains']}д" + (f"+{c['cidrs']}ip" if c['cidrs'] else "")
+    print(f"  [{status}] {c['emoji']}  {c['name']:<28} ({cnt})   {c['slug']}")
+PY
+  else
+    grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/  \1/'
+  fi
+  sep
+  info "Загрузить:  ${W}kox list-load <slug>${N}  или  ${W}kox list-load all${N}"
+  info "Удалить:    ${W}kox list-remove <slug>${N}"
+  info "Обновления: ${W}kox list-check${N}"
+  sep
+}
+
+kox_list_load() {
+  SLUG="${1:-}"
+  [ -z "$SLUG" ] && fail "Укажите: kox list-load <slug> | all" && kox_list_cats && return 1
+
+  if [ "$SLUG" = "all" ]; then
+    info "Загружаю все категории..."
+    CATS_FILE="${KOX_LISTS_DIR}/categories.json"
+    [ -f "$CATS_FILE" ] || _list_fetch_categories_json
+    if command -v python3 >/dev/null 2>&1; then
+      SLUGS=$(python3 -c "import json; d=json.load(open('$CATS_FILE')); print('\n'.join(c['slug'] for c in d['categories']))")
+    else
+      SLUGS=$(grep '"slug"' "$CATS_FILE" | sed 's/.*"slug": *"\([^"]*\)".*/\1/')
+    fi
+    TOTAL_D=0; TOTAL_IP=0
+    for S in $SLUGS; do
+      _list_fetch_cat "$S" >/dev/null 2>&1
+      RES=$(_list_add_entries "$S")
+      D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+      TOTAL_D=$((TOTAL_D+D)); TOTAL_IP=$((TOTAL_IP+I))
+      _list_mark_loaded "$S"
+    done
+    ok "Загружено: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
+  else
+    _list_is_loaded "$SLUG" && { warn "Категория ${W}${SLUG}${N} уже загружена"; return 0; }
+    info "Загружаю: ${W}${SLUG}${N}..."
+    _list_fetch_cat "$SLUG" || { fail "Категория '${SLUG}' не найдена"; return 1; }
+    RES=$(_list_add_entries "$SLUG")
+    D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+    _list_mark_loaded "$SLUG"
+    ok "Добавлено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей"
+  fi
+  info "Перезапускаю Xray..."
+  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+}
+
+kox_list_remove() {
+  SLUG="${1:-}"
+  [ -z "$SLUG" ] && fail "Укажите: kox list-remove <slug> | all" && return 1
+  if [ "$SLUG" = "all" ]; then
+    info "Удаляю все загруженные категории..."
+    TOTAL_D=0; TOTAL_IP=0
+    while IFS= read -r S; do
+      [ -z "$S" ] && continue
+      RES=$(_list_remove_entries "$S")
+      D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+      TOTAL_D=$((TOTAL_D+D)); TOTAL_IP=$((TOTAL_IP+I))
+      _list_unmark_loaded "$S"
+    done < "${KOX_LISTS_LOADED:-/dev/null}"
+    ok "Удалено: ${W}${TOTAL_D}${N} доменов, ${W}${TOTAL_IP}${N} IP/подсетей"
+  else
+    _list_is_loaded "$SLUG" || { warn "Категория ${W}${SLUG}${N} не загружена"; return 0; }
+    info "Удаляю: ${W}${SLUG}${N}..."
+    RES=$(_list_remove_entries "$SLUG")
+    D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+    _list_unmark_loaded "$SLUG"
+    ok "Удалено: ${W}${D}${N} доменов, ${W}${I}${N} IP/подсетей"
+  fi
+  info "Перезапускаю Xray..."
+  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+}
+
+kox_list_check() {
+  info "Проверяю обновления списков..."
+  LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  if [ -z "$REMOTE_VER" ] || ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
+    fail "Не удалось получить версию списков"; return 1
+  fi
+  CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  if [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null; then
+    ok "Списки актуальны: ${W}v${REMOTE_VER}${N}"
+  else
+    warn "Доступно обновление: ${W}v${REMOTE_VER}${N} (текущая: ${LOCAL_VER:-нет})"
+    info "Для обновления: ${W}kox list-update${N}"
+  fi
+}
+
+kox_list_update() {
+  info "Обновляю списки с GitHub..."
+  mkdir -p "$KOX_LISTS_DIR"
+  REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$REMOTE_VER" ] && fail "Нет подключения" && return 1
+  LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  CUR_INT=$(printf '%s' "${LOCAL_VER:-0}" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
+  if [ "$REM_INT" -le "${CUR_INT:-0}" ] 2>/dev/null; then
+    ok "Списки уже актуальны: ${W}v${REMOTE_VER}${N}"; return 0
+  fi
+  warn "Новая версия: ${W}v${REMOTE_VER}${N}"
+  _list_fetch_categories_json || { fail "Ошибка загрузки индекса"; return 1; }
+  LOADED=$(cat "$KOX_LISTS_LOADED" 2>/dev/null || echo "")
+  if [ -z "$LOADED" ]; then
+    printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+    ok "Индекс категорий обновлён. Загруженных категорий нет."; return 0
+  fi
+  printf '%s\n' "$LOADED" | while IFS= read -r S; do
+    [ -z "$S" ] && continue
+    _list_remove_entries "$S" >/dev/null 2>&1
+    _list_fetch_cat "$S" >/dev/null 2>&1
+    RES=$(_list_add_entries "$S")
+    D=$(printf '%s' "$RES" | cut -d' ' -f1); I=$(printf '%s' "$RES" | cut -d' ' -f2)
+    ok "Обновлено ${W}${S}${N}: +${D}д +${I}ip"
+  done
+  printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
+  ok "Обновлено до v${REMOTE_VER}"
+  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+}
+
 kox_clear_log() {
   printf '' > "$ERRLOG" 2>/dev/null || true
   printf '' > "$ACCLOG" 2>/dev/null || true
@@ -648,6 +853,11 @@ case "$CMD" in
   update-sub)    kox_update_sub ;;
   cron-on)       kox_cron_enable ;;
   cron-off)      kox_cron_disable ;;
+  list-cats)     kox_list_cats ;;
+  list-load)     kox_list_load "$@" ;;
+  list-remove)   kox_list_remove "$@" ;;
+  list-check)    kox_list_check ;;
+  list-update)   kox_list_update ;;
   upgrade)       kox_upgrade ;;
   clear-log)     kox_clear_log ;;
   bot)           kox_bot ;;

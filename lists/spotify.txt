@@ -1,0 +1,8 @@
+# KOX Shield — Spotify
+
+# domains
+spotify.com
+scdn.co
+spotifycdn.com
+spotilocal.com
+spotify.design

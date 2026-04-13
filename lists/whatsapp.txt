@@ -1,0 +1,18 @@
+# KOX Shield — WhatsApp
+
+# domains
+whatsapp.com
+whatsapp.net
+wa.me
+w.app
+web.whatsapp.com
+faq.whatsapp.com
+crashlogs.whatsapp.net
+static.whatsapp.net
+mmg.whatsapp.net
+media.whatsapp.com
+scontent.whatsapp.net
+pps.whatsapp.net
+dit.whatsapp.net
+graph.whatsapp.com
+v.whatsapp.net

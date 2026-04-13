@@ -1,0 +1,8 @@
+# KOX Shield — Twitch
+
+# domains
+twitch.tv
+twitchcdn.net
+jtvnw.net
+ttvnw.net
+ext-twitch.tv

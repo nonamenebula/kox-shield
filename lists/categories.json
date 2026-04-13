@@ -1,0 +1,266 @@
+{
+  "version": "2026.04.13",
+  "categories": [
+    {
+      "slug": "telegram",
+      "name": "Telegram",
+      "emoji": "✈️",
+      "file": "telegram.txt",
+      "domains": 21,
+      "cidrs": 0,
+      "total": 21
+    },
+    {
+      "slug": "youtube",
+      "name": "YouTube",
+      "emoji": "📺",
+      "file": "youtube.txt",
+      "domains": 7,
+      "cidrs": 0,
+      "total": 7
+    },
+    {
+      "slug": "whatsapp",
+      "name": "WhatsApp",
+      "emoji": "💬",
+      "file": "whatsapp.txt",
+      "domains": 15,
+      "cidrs": 0,
+      "total": 15
+    },
+    {
+      "slug": "twitter-x",
+      "name": "Twitter / X",
+      "emoji": "🐦",
+      "file": "twitter-x.txt",
+      "domains": 12,
+      "cidrs": 0,
+      "total": 12
+    },
+    {
+      "slug": "instagram",
+      "name": "Instagram",
+      "emoji": "📸",
+      "file": "instagram.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "facebook",
+      "name": "Facebook",
+      "emoji": "👤",
+      "file": "facebook.txt",
+      "domains": 8,
+      "cidrs": 10,
+      "total": 18
+    },
+    {
+      "slug": "discord",
+      "name": "Discord",
+      "emoji": "🎮",
+      "file": "discord.txt",
+      "domains": 8,
+      "cidrs": 0,
+      "total": 8
+    },
+    {
+      "slug": "tiktok",
+      "name": "TikTok",
+      "emoji": "🎵",
+      "file": "tiktok.txt",
+      "domains": 8,
+      "cidrs": 0,
+      "total": 8
+    },
+    {
+      "slug": "spotify",
+      "name": "Spotify",
+      "emoji": "🎶",
+      "file": "spotify.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "netflix",
+      "name": "Netflix",
+      "emoji": "🎬",
+      "file": "netflix.txt",
+      "domains": 7,
+      "cidrs": 0,
+      "total": 7
+    },
+    {
+      "slug": "chatgpt-openai",
+      "name": "ChatGPT / OpenAI",
+      "emoji": "🤖",
+      "file": "chatgpt-openai.txt",
+      "domains": 13,
+      "cidrs": 0,
+      "total": 13
+    },
+    {
+      "slug": "google",
+      "name": "Google",
+      "emoji": "🔍",
+      "file": "google.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "steam",
+      "name": "Steam",
+      "emoji": "🎮",
+      "file": "steam.txt",
+      "domains": 7,
+      "cidrs": 0,
+      "total": 7
+    },
+    {
+      "slug": "reddit",
+      "name": "Reddit",
+      "emoji": "🌐",
+      "file": "reddit.txt",
+      "domains": 6,
+      "cidrs": 0,
+      "total": 6
+    },
+    {
+      "slug": "linkedin",
+      "name": "LinkedIn",
+      "emoji": "💼",
+      "file": "linkedin.txt",
+      "domains": 3,
+      "cidrs": 0,
+      "total": 3
+    },
+    {
+      "slug": "pornhub",
+      "name": "Pornhub / 18+",
+      "emoji": "🔞",
+      "file": "pornhub.txt",
+      "domains": 9,
+      "cidrs": 0,
+      "total": 9
+    },
+    {
+      "slug": "canva",
+      "name": "Canva",
+      "emoji": "🎨",
+      "file": "canva.txt",
+      "domains": 3,
+      "cidrs": 0,
+      "total": 3
+    },
+    {
+      "slug": "bing",
+      "name": "Bing / Copilot",
+      "emoji": "🔎",
+      "file": "bing.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "medium-notion",
+      "name": "Medium / Notion / Figma",
+      "emoji": "📝",
+      "file": "medium-notion.txt",
+      "domains": 8,
+      "cidrs": 0,
+      "total": 8
+    },
+    {
+      "slug": "zoom",
+      "name": "Zoom",
+      "emoji": "📹",
+      "file": "zoom.txt",
+      "domains": 4,
+      "cidrs": 0,
+      "total": 4
+    },
+    {
+      "slug": "twitch",
+      "name": "Twitch",
+      "emoji": "📡",
+      "file": "twitch.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "github-dev",
+      "name": "GitHub / Dev",
+      "emoji": "💻",
+      "file": "github-dev.txt",
+      "domains": 16,
+      "cidrs": 0,
+      "total": 16
+    },
+    {
+      "slug": "soundcloud",
+      "name": "SoundCloud",
+      "emoji": "🎵",
+      "file": "soundcloud.txt",
+      "domains": 2,
+      "cidrs": 0,
+      "total": 2
+    },
+    {
+      "slug": "viber",
+      "name": "Viber",
+      "emoji": "📱",
+      "file": "viber.txt",
+      "domains": 2,
+      "cidrs": 0,
+      "total": 2
+    },
+    {
+      "slug": "signal",
+      "name": "Signal",
+      "emoji": "🔒",
+      "file": "signal.txt",
+      "domains": 3,
+      "cidrs": 0,
+      "total": 3
+    },
+    {
+      "slug": "clubhouse",
+      "name": "Clubhouse",
+      "emoji": "🎙️",
+      "file": "clubhouse.txt",
+      "domains": 2,
+      "cidrs": 0,
+      "total": 2
+    },
+    {
+      "slug": "pinterest",
+      "name": "Pinterest",
+      "emoji": "📌",
+      "file": "pinterest.txt",
+      "domains": 2,
+      "cidrs": 0,
+      "total": 2
+    },
+    {
+      "slug": "telegram-ip",
+      "name": "Telegram IP (звонки)",
+      "emoji": "📶",
+      "file": "telegram-ip.txt",
+      "domains": 0,
+      "cidrs": 13,
+      "total": 13
+    },
+    {
+      "slug": "other",
+      "name": "Прочее",
+      "emoji": "📦",
+      "file": "other.txt",
+      "domains": 25,
+      "cidrs": 0,
+      "total": 25
+    }
+  ]
+}

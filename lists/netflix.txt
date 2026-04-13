@@ -1,0 +1,10 @@
+# KOX Shield — Netflix
+
+# domains
+netflix.com
+nflxext.com
+nflximg.net
+nflxvideo.net
+nflxso.net
+netflix.net
+fast.com

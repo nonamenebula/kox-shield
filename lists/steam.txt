@@ -1,0 +1,10 @@
+# KOX Shield — Steam
+
+# domains
+steampowered.com
+steamcommunity.com
+steamstatic.com
+steamcontent.com
+steamcdn-a.akamaihd.net
+store.steampowered.com
+steamgames.com

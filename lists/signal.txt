@@ -1,0 +1,6 @@
+# KOX Shield — Signal
+
+# domains
+signal.org
+whispersystems.org
+signal.group

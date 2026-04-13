@@ -1,0 +1,8 @@
+# KOX Shield — Bing / Copilot
+
+# domains
+bing.com
+bingapis.com
+bing.net
+copilot.microsoft.com
+sydney.bing.com

@@ -1,0 +1,5 @@
+# KOX Shield — SoundCloud
+
+# domains
+soundcloud.com
+sndcdn.com

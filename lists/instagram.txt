@@ -1,0 +1,8 @@
+# KOX Shield — Instagram
+
+# domains
+instagram.com
+cdninstagram.com
+i.instagram.com
+scontent.cdninstagram.com
+threads.net

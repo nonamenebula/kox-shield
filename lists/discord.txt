@@ -1,0 +1,11 @@
+# KOX Shield — Discord
+
+# domains
+discord.com
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+discordcdn.com
+dis.gd
+gateway.discord.gg

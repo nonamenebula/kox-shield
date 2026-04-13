@@ -1,0 +1,16 @@
+# KOX Shield — ChatGPT / OpenAI
+
+# domains
+openai.com
+chatgpt.com
+chat.openai.com
+oaiusercontent.com
+auth0.openai.com
+platform.openai.com
+oaistatic.com
+claude.ai
+anthropic.com
+claude.com
+anthropic-cdn.com
+gemini.google.com
+bard.google.com

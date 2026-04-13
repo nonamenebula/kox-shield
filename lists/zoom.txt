@@ -1,0 +1,7 @@
+# KOX Shield — Zoom
+
+# domains
+zoom.us
+zoomcdn.com
+zoom.com
+zoomgov.com

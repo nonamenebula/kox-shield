@@ -1,0 +1,24 @@
+# KOX Shield — Telegram
+
+# domains
+telegram.org
+t.me
+tdesktop.com
+telesco.pe
+core.telegram.org
+api.telegram.org
+cdn.telegram.org
+web.telegram.org
+desktop.telegram.org
+flora.telegram.org
+venus.telegram.org
+pluto.telegram.org
+vesta.telegram.org
+aurora.telegram.org
+telegram.me
+telegra.ph
+graph.org
+contest.com
+updates.telegram.org
+instantview.telegram.org
+translations.telegram.org

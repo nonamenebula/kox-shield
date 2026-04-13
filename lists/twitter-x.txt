@@ -1,0 +1,15 @@
+# KOX Shield — Twitter / X
+
+# domains
+twitter.com
+x.com
+t.co
+twimg.com
+twitpic.com
+abs.twimg.com
+pbs.twimg.com
+video.twimg.com
+api.twitter.com
+api.x.com
+mobile.twitter.com
+ton.twitter.com

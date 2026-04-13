@@ -1,0 +1,19 @@
+# KOX Shield — GitHub / Dev
+
+# domains
+github.com
+github.io
+githubusercontent.com
+githubassets.com
+github.dev
+copilot.github.com
+npmjs.com
+npmjs.org
+registry.npmjs.org
+docker.io
+docker.com
+registry.hub.docker.com
+hub.docker.com
+stackoverflow.com
+stackexchange.com
+gitlab.com

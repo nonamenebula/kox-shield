@@ -190,6 +190,15 @@ kox test                # Validate config.json
 kox stats               # Traffic statistics
 kox server              # VLESS server parameters
 
+# Domain category lists
+kox list-cats                   # Show all available categories (Telegram, YouTube, ...)
+kox list-load telegram          # Load category into tunnel
+kox list-load all               # Load all categories at once
+kox list-remove telegram        # Remove category from tunnel
+kox list-remove all             # Remove all categories
+kox list-check                  # Check for list updates on GitHub
+kox list-update                 # Download and apply updated lists
+
 # Updates
 kox update-sub          # Update server parameters from subscription
 kox cron-on             # Enable auto-update (daily at 04:00)

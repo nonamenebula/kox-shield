@@ -1,0 +1,6 @@
+# KOX Shield — Canva
+
+# domains
+canva.com
+canva.cn
+static.canva.com

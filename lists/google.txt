@@ -1,0 +1,8 @@
+# KOX Shield — Google
+
+# domains
+gstatic.com
+googleusercontent.com
+accounts.google.com
+gemini.google.com
+bard.google.com

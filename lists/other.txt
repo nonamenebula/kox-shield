@@ -1,0 +1,28 @@
+# KOX Shield — Прочее
+
+# domains
+deezer.com
+patreon.com
+grammarly.com
+paypal.com
+stripe.com
+ebay.com
+wikipedia.org
+wikimedia.org
+archive.org
+bbc.com
+bbc.co.uk
+cnn.com
+nytimes.com
+reuters.com
+apnews.com
+proton.me
+protonmail.com
+protonvpn.com
+snapchat.com
+snap.com
+sc-cdn.net
+rutracker.org
+rutor.info
+nnmclub.to
+2ip.ru

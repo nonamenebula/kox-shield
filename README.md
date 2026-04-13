@@ -190,7 +190,16 @@ kox test                # Проверить корректность config.jso
 kox stats               # Статистика трафика
 kox server              # Параметры VLESS сервера
 
-# Обновление
+# Списки доменов по категориям
+kox list-cats                   # Все доступные категории (Telegram, YouTube, ...)
+kox list-load telegram          # Загрузить категорию в туннель
+kox list-load all               # Загрузить все категории сразу
+kox list-remove telegram        # Удалить категорию из туннеля
+kox list-remove all             # Удалить все категории
+kox list-check                  # Проверить наличие обновлений
+kox list-update                 # Обновить списки с GitHub
+
+# Обновление KOX Shield
 kox update-sub          # Обновить параметры из подписки
 kox cron-on             # Авто-обновление (ежедневно 04:00)
 kox cron-off            # Отключить авто-обновление
@@ -238,6 +247,7 @@ kox help                # Список всех команд
 - ✅ Меню команд `/` в Telegram
 - ✅ Только для администратора — остальные пользователи игнорируются
 - ✅ Трафик бота идёт через VPN (не блокируется провайдером)
+- 🔔 **Уведомления об обновлении списков доменов** — бот сообщает, когда появляются новые категории, с предложением обновить
 
 ### Настройка бота
 
@@ -255,6 +265,50 @@ KOX_ADMIN_ID="123456789"
 ```bash
 /opt/etc/init.d/S90kox-bot start
 ```
+
+---
+
+## 📋 Категории доменов
+
+KOX Shield поставляется с **29 категориями** доменов и IP-адресов. Загружайте только то, что нужно вам:
+
+```bash
+kox list-cats          # посмотреть все категории
+kox list-load youtube  # добавить YouTube в туннель
+kox list-load all      # добавить всё сразу
+```
+
+| # | Категория | Что включено |
+|---|-----------|--------------|
+| ✈️ | `telegram` | Telegram, WebApp, Telegraph (21 домен) |
+| 📺 | `youtube` | YouTube, Shorts, API (7 доменов) |
+| 💬 | `whatsapp` | WhatsApp, wa.me (15 доменов) |
+| 🐦 | `twitter-x` | Twitter / X (12 доменов) |
+| 📸 | `instagram` | Instagram, Threads (5 доменов) |
+| 👤 | `facebook` | Facebook, Messenger (8д + 10 IP) |
+| 🎮 | `discord` | Discord, CDN (8 доменов) |
+| 🎵 | `tiktok` | TikTok (8 доменов) |
+| 🎶 | `spotify` | Spotify (5 доменов) |
+| 🎬 | `netflix` | Netflix (7 доменов) |
+| 🤖 | `chatgpt-openai` | ChatGPT, Claude, Gemini (13 доменов) |
+| 🔍 | `google` | Google accounts, Gemini (5 доменов) |
+| 🎮 | `steam` | Steam (7 доменов) |
+| 🌐 | `reddit` | Reddit (6 доменов) |
+| 💼 | `linkedin` | LinkedIn (3 домена) |
+| 🎨 | `canva` | Canva (3 домена) |
+| 🔎 | `bing` | Bing, Copilot (5 доменов) |
+| 📝 | `medium-notion` | Medium, Notion, Figma, Miro (8 доменов) |
+| 📹 | `zoom` | Zoom (4 домена) |
+| 📡 | `twitch` | Twitch (5 доменов) |
+| 💻 | `github-dev` | GitHub, npm, Docker, GitLab, StackOverflow (16 доменов) |
+| 🎵 | `soundcloud` | SoundCloud (2 домена) |
+| 📱 | `viber` | Viber (2 домена) |
+| 🔒 | `signal` | Signal (3 домена) |
+| 📌 | `pinterest` | Pinterest (2 домена) |
+| 📶 | `telegram-ip` | Telegram IP для звонков (13 подсетей) |
+| 📦 | `other` | Patreon, PayPal, BBC, Wikipedia и др. (25 доменов) |
+
+> Бот уведомляет вас, когда появляются обновления категорий. Настройки уведомлений: `/listnotify on/off`
 
 ---
 

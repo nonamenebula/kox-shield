@@ -1,0 +1,11 @@
+# KOX Shield — Medium / Notion / Figma
+
+# domains
+medium.com
+notion.so
+notion.site
+towardsdatascience.com
+miro.com
+miro.medium.com
+figma.com
+figmacdn.com
