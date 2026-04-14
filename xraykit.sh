@@ -222,7 +222,7 @@ phase_subscription() {
   VLESS_FP=$(url_decode "$(get_param fp)");    VLESS_FP="${VLESS_FP:-chrome}"
   VLESS_PBK=$(url_decode "$(get_param pbk)")
   VLESS_SID=$(url_decode "$(get_param sid)")
-  VLESS_FLOW=$(url_decode "$(get_param flow)"); VLESS_FLOW="${VLESS_FLOW:-xtls-rprx-vision}"
+  VLESS_FLOW=$(url_decode "$(get_param flow)")
 
   for FIELD in VLESS_UUID VLESS_HOST VLESS_PORT VLESS_PBK VLESS_SID; do
     [ -z "${!FIELD}" ] && die "Не удалось извлечь $FIELD из VLESS URI"
