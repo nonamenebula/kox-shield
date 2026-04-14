@@ -424,14 +424,28 @@ kox_update_sub() {
 
   [ -z "$NEW_HOST" ] || [ -z "$NEW_UUID" ] && fail "Не удалось разобрать VLESS URL" && return 1
 
-  # Update config.json
-  if [ -f "$CONF" ]; then
-    sed -i "s|\"address\": \"[^\"]*\"|\"address\": \"${NEW_HOST}\"|" "$CONF" 2>/dev/null || true
-    sed -i "s|\"port\": [0-9]*\(.*vnext\)\?|\"port\": ${NEW_PORT}|" "$CONF" 2>/dev/null || true
-    sed -i "s|\"id\": \"[^\"]*\"|\"id\": \"${NEW_UUID}\"|" "$CONF" 2>/dev/null || true
-    [ -n "$NEW_PBK" ] && sed -i "s|\"publicKey\": \"[^\"]*\"|\"publicKey\": \"${NEW_PBK}\"|" "$CONF" 2>/dev/null || true
-    [ -n "$NEW_SNI" ] && sed -i "s|\"serverName\": \"[^\"]*\"|\"serverName\": \"${NEW_SNI}\"|" "$CONF" 2>/dev/null || true
-    ok "config.json обновлён"
+  # Decode %2F and other URL-encoded chars in spiderX
+  NEW_SPX=$(get_param spx | sed 's/%2F/\//g; s/%2f/\//g')
+
+  # Update config.json using jq to avoid replacing inbound ports
+  if [ -f "$CONF" ] && command -v jq >/dev/null 2>&1; then
+    jq --arg addr "$NEW_HOST" --argjson port "$NEW_PORT" \
+       --arg uuid "$NEW_UUID" --arg pbk "$NEW_PBK" \
+       --arg sni "$NEW_SNI" --arg sid "$NEW_SID" --arg spx "$NEW_SPX" '
+      .outbounds = [.outbounds[] |
+        if .protocol == "vless" then
+          .settings.vnext[0].address = $addr |
+          .settings.vnext[0].port = $port |
+          .settings.vnext[0].users[0].id = $uuid |
+          .settings.vnext[0].users[0].flow = "" |
+          (if $pbk != "" then .streamSettings.realitySettings.publicKey = $pbk else . end) |
+          (if $sni != "" then .streamSettings.realitySettings.serverName = $sni else . end) |
+          (if $sid != "" then .streamSettings.realitySettings.shortId = $sid else . end) |
+          (if $spx != "" then .streamSettings.realitySettings.spiderX = $spx else . end)
+        else . end
+      ]
+    ' "$CONF" > /tmp/kox-conf-update.json && mv /tmp/kox-conf-update.json "$CONF"
+    ok "config.json обновлён (порты inbound сохранены)"
   fi
 
   # Update kox.conf
