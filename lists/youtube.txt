@@ -8,3 +8,8 @@ ytimg.com
 ggpht.com
 youtube-nocookie.com
 youtube.googleapis.com
+youtubei.googleapis.com
+youtubeembeddedplayer.googleapis.com
+yt3.googleusercontent.com
+wide-youtube.l.google.com
+gvt1.com

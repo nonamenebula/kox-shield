@@ -1,5 +1,5 @@
 {
-  "version": "2026.04.14",
+  "version": "2026.04.29",
   "categories": [
     {
       "slug": "telegram",
@@ -15,9 +15,9 @@
       "name": "YouTube",
       "emoji": "📺",
       "file": "youtube.txt",
-      "domains": 7,
+      "domains": 12,
       "cidrs": 0,
-      "total": 7
+      "total": 12
     },
     {
       "slug": "whatsapp",
