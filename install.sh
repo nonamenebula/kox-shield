@@ -84,6 +84,12 @@ parse_vless_url() {
   [ -z "$VLESS_UUID" ] || [ -z "$VLESS_HOST" ] && fail "Не удалось разобрать VLESS URL"
 }
 
+# URL-decode (%XX → байты UTF-8, + → пробел). Работает в busybox sh.
+url_decode() {
+  # ВАЖНО: сначала экранируем символ % → \x, затем printf '%b' интерпретирует \x
+  printf '%b' "$(printf '%s' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
 parse_subscription() {
   SUB_URL="$1"
   info "Загружаю подписку: $SUB_URL"
@@ -96,31 +102,46 @@ parse_subscription() {
   fi
 
   if [ "$COUNT" -eq 1 ]; then
-    VLESS_URL=$(printf '%s' "$RAW" | grep '^vless://')
+    VLESS_URL=$(printf '%s' "$RAW" | grep '^vless://' | head -1)
     parse_vless_url "$VLESS_URL"
     ok "Сервер: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
     return
   fi
 
-  # Несколько серверов — предлагаем выбор
+  # Несколько серверов — предлагаем выбор. Список делаем через временный файл,
+  # чтобы избежать subshell и неправильного i++ при пайпе через while.
+  TMPLIST="/tmp/.kox-sublist.$$"
+  printf '%s\n' "$RAW" | grep '^vless://' > "$TMPLIST" 2>/dev/null
+  COUNT=$(wc -l < "$TMPLIST" | tr -d ' ')
+
   printf "\n"
   info "${W}Доступно серверов: ${COUNT}${N}"
   sep
   i=1
-  printf '%s' "$RAW" | grep '^vless://' | while IFS= read -r line; do
-    HOST=$(printf '%s' "$line" | sed 's|vless://[^@]*@\([^:]*\).*|\1|')
-    NAME=$(printf '%s' "$line" | sed 's|.*#\(.*\)|\1|' | head -c 40)
+  while IFS= read -r line; do
+    HOST=$(printf '%s' "$line" | sed 's|vless://[^@]*@\([^:?#]*\).*|\1|')
+    case "$line" in
+      *\#*) NAME_RAW=${line##*\#} ;;
+      *)    NAME_RAW="" ;;
+    esac
+    if [ -n "$NAME_RAW" ]; then
+      NAME=$(url_decode "$NAME_RAW" 2>/dev/null || printf '%s' "$NAME_RAW")
+      [ -z "$NAME" ] && NAME="—"
+    else
+      NAME="—"
+    fi
     printf "  ${W}%d${N}) %s  ${C}%s${N}\n" "$i" "$HOST" "$NAME"
     i=$((i+1))
-  done
+  done < "$TMPLIST"
   sep
   printf "\n"
-  ask "Выберите сервер [1-${COUNT}]:"
+  ask "Выберите сервер [1-${COUNT}], Enter = 1:"
   read -r CHOICE
   [ -z "$CHOICE" ] && CHOICE=1
 
-  VLESS_URL=$(printf '%s' "$RAW" | grep '^vless://' | sed -n "${CHOICE}p")
-  [ -z "$VLESS_URL" ] && fail "Неверный выбор"
+  VLESS_URL=$(sed -n "${CHOICE}p" "$TMPLIST")
+  rm -f "$TMPLIST"
+  [ -z "$VLESS_URL" ] && fail "Неверный выбор: $CHOICE"
   parse_vless_url "$VLESS_URL"
   ok "Выбран сервер: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
 }
