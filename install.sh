@@ -348,45 +348,58 @@ NATSCRIPT
   sh "${NAT_DIR}/99-kox-nat.sh" 2>/dev/null || true
   ok "iptables правила настроены"
 
-  # Watchdog: если Xray упал — снимаем iptables чтобы интернет продолжал работать напрямую
+  # Watchdog v2: проверяет процесс Xray И активность порта 10808.
+  # Если упал — снимает iptables, чтобы интернет работал напрямую, и пытается рестартнуть.
   cat > /opt/etc/kox-watchdog.sh << 'WATCHDOG'
 #!/bin/sh
-# KOX Watchdog — авто-fallback если Xray не работает
+# KOX Watchdog v2 — проверяет xray И реальный VPN тоннель
 XRAY_INIT="/opt/etc/init.d/S24xray"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
 LOGF="/opt/var/log/kox-watchdog.log"
 TS=$(date '+%H:%M:%S')
+VPN_OFF_MARKER="/tmp/kox-vpn-off"
 
-if pgrep xray >/dev/null 2>&1; then
-  # Xray работает — убедиться что iptables правила есть (восстановить если пропали)
-  if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
-    if [ ! -f /tmp/kox-vpn-off ]; then
-      [ -x "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null
-      echo "$TS iptables восстановлен" >> "$LOGF"
-    fi
-  fi
-else
-  # Xray не работает — снять iptables чтобы интернет шёл напрямую
-  iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-  iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+# Если юзер вручную выключил — не трогать
+[ -f "$VPN_OFF_MARKER" ] && exit 0
+
+log() { echo "$TS $*" >> "$LOGF"; }
+
+# 1. Проверяем что xray работает
+if ! pgrep xray >/dev/null 2>&1; then
+  log "Xray не работает — снимаю iptables"
+  iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  echo "$TS Xray упал — iptables снят, интернет работает напрямую" >> "$LOGF"
-  # Попытка перезапуска
-  if [ -x "$XRAY_INIT" ]; then
+  if [ -f "$XRAY_INIT" ]; then
     "$XRAY_INIT" start 2>/dev/null
-    sleep 3
+    sleep 5
     if pgrep xray >/dev/null 2>&1; then
-      [ -x "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null
-      echo "$TS Xray перезапущен, iptables восстановлен" >> "$LOGF"
+      sh "$NAT_SCRIPT" 2>/dev/null && log "Xray перезапущен, iptables восстановлен"
     else
-      echo "$TS Xray не удалось перезапустить — трафик идёт напрямую" >> "$LOGF"
+      log "Xray не удалось перезапустить — интернет напрямую"
     fi
   fi
-  # Ротация лога
-  [ $(wc -l < "$LOGF" 2>/dev/null || echo 0) -gt 200 ] && tail -100 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
+  exit 0
 fi
+
+# 2. Проверяем порт xray (BusyBox nc не имеет -z, используем netstat)
+if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
+  log "Xray порт 10808 не слушает — перезапуск"
+  pkill xray 2>/dev/null; sleep 2
+  "$XRAY_INIT" start 2>/dev/null &
+  exit 0
+fi
+
+# 3. Проверяем iptables (восстановить если пропали)
+if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
+  log "iptables правила пропали — восстанавливаю"
+  sh "$NAT_SCRIPT" 2>/dev/null
+fi
+
+# 4. Ротация лога
+[ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 300 ] && \
+  tail -150 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
 WATCHDOG
 
   chmod +x /opt/etc/kox-watchdog.sh
