@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.6"
+KOX_VERSION="2026.05.02.7"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -499,10 +499,12 @@ h_do_switch() {
     /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
   fi
 
-  # Poll for xray to come up (up to 12 seconds)
+  # Poll for xray to come up (up to 15 seconds).
+  # NOTE: BusyBox `nc` on Keenetic does NOT support `-z`, so we check via
+  # `netstat -ln | grep 10808` instead.
   XRAY_UP=0
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    if pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null; then
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
       XRAY_UP=1
       break
     fi
@@ -531,8 +533,8 @@ Xray запущен, порт 10808 активен." \
       /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
     fi
     # Wait for rollback xray to come up too
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null && break
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && break
       sleep 1
     done
     update_menu "$CHAT" "❌ <b>Переключение не удалось — откат!</b>
