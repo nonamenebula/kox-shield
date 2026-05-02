@@ -1,13 +1,32 @@
-# KOX Shield — Supercell (Clash Royale, Clash of Clans, Brawl Stars)
-# domains
+# KOX Shield — Supercell (Clash Royale, Clash of Clans, Brawl Stars, Hay Day)
+# Официальные домены: https://supercell.com/en/our-domains
+# IP-диапазон: AS212916 Supercell Oy (Хельсинки, Финляндия)
+
+# domains — игры
 clashroyale.com
-supercell.com
-id.supercell.com
+clashroyaleapp.com
+clash.com
 clashofclans.com
 brawlstars.com
 hayday.com
+haydaygame.com
 boombeach.com
-squadsbusters.com
-# cidrs
-185.7.50.0/24
-185.7.118.0/24
+clashmini.com
+squadbusters.com
+mo.co
+
+# domains — аккаунт, поддержка, магазин
+supercell.com
+supercellid.com
+id.supercell.com
+accounts.supercell.com
+support.supercell.com
+store.supercell.com
+supercellstore.com
+supercellgames.com
+supercellcreators.com
+creators.supercell.com
+gamesfirsthelsinki.com
+
+# cidrs — Supercell Oy AS212916 (официальный блок игровых серверов)
+5.180.72.0/22
