@@ -27,6 +27,7 @@ start() {
 }
 
 stop() {
+  # Kill by PID file first
   if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
     if kill -0 "$PID" 2>/dev/null; then
@@ -35,10 +36,11 @@ stop() {
       kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null || true
     fi
     rm -f "$PID_FILE"
-    echo "$DESC stopped"
-  else
-    echo "$DESC is not running"
   fi
+  # Kill ALL remaining kox-bot instances (handles trap/race conditions)
+  pkill -f "kox-bot" 2>/dev/null || true
+  sleep 1
+  echo "$DESC stopped"
 }
 
 restart() {
