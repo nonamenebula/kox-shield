@@ -1,3 +1,4 @@
+Updated: {'slug': 'supercell', 'name': 'Supercell (Clash Royale, CoC, Brawl Stars, Hay Day)', 'emoji': '🎯', 'file': 'supercell.txt', 'domains': 21, 'cidrs': 1, 'total': 22}
 {
   "version": "2026.04.29",
   "categories": [
@@ -255,12 +256,12 @@
     },
     {
       "slug": "supercell",
-      "name": "Supercell (Clash Royale / CoC / Brawl Stars)",
+      "name": "Supercell (Clash Royale, CoC, Brawl Stars, Hay Day)",
       "emoji": "🎯",
       "file": "supercell.txt",
-      "domains": 8,
-      "cidrs": 2,
-      "total": 10
+      "domains": 21,
+      "cidrs": 1,
+      "total": 22
     },
     {
       "slug": "other",
