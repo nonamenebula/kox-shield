@@ -37,9 +37,23 @@ stop() {
     fi
     rm -f "$PID_FILE"
   fi
-  # Kill ALL remaining kox-bot instances (handles trap/race conditions)
-  pkill -f "kox-bot" 2>/dev/null || true
+  # Kill ALL remaining kox-bot instances (handles trap/race conditions).
+  # NOTE: BusyBox on Keenetic does NOT have pkill — fall back to killall on
+  # a wrapper script name, which won't match (kox-bot is run as `sh /opt/bin/kox-bot`).
+  # Match by walking /proc instead.
+  for p in /proc/[0-9]*/cmdline; do
+    if grep -q "kox-bot" "$p" 2>/dev/null; then
+      pid=${p#/proc/}; pid=${pid%/cmdline}
+      kill "$pid" 2>/dev/null
+    fi
+  done
   sleep 1
+  for p in /proc/[0-9]*/cmdline; do
+    if grep -q "kox-bot" "$p" 2>/dev/null; then
+      pid=${p#/proc/}; pid=${pid%/cmdline}
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done
   echo "$DESC stopped"
 }
 

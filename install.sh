@@ -386,7 +386,8 @@ fi
 # 2. Проверяем порт xray (BusyBox nc не имеет -z, используем netstat)
 if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
   log "Xray порт 10808 не слушает — перезапуск"
-  pkill xray 2>/dev/null; sleep 2
+  # BusyBox не имеет pkill — используем killall
+  killall xray 2>/dev/null; sleep 2
   "$XRAY_INIT" start 2>/dev/null &
   exit 0
 fi
@@ -442,8 +443,8 @@ download_scripts() {
 # ── Запуск Xray ───────────────────────────────────────────────────────────────
 start_xray() {
   info "Запускаю Xray..."
-  # Остановить если уже запущен
-  pkill xray 2>/dev/null || true; sleep 1
+  # Остановить если уже запущен (BusyBox не имеет pkill)
+  killall xray 2>/dev/null || true; sleep 1
   if [ -f "${INIT}/S24xray" ]; then
     "${INIT}/S24xray" start 2>/dev/null || true
   else
