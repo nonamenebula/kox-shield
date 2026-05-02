@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.7"
+KOX_VERSION="2026.05.02.8"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -490,8 +490,9 @@ h_do_switch() {
     mv "$TMP_CONF" "$CONF"
   fi
 
-  # Restart xray (do stop/start manually to control timing)
-  pkill xray 2>/dev/null
+  # Restart xray (do stop/start manually to control timing).
+  # NOTE: BusyBox on Keenetic does NOT have pkill, only killall/pidof/kill.
+  killall xray 2>/dev/null
   sleep 2
   if [ -x "$XRAY_INIT" ]; then
     "$XRAY_INIT" start >/dev/null 2>&1
@@ -526,7 +527,7 @@ Xray запущен, порт 10808 активен." \
     # Auto-revert
     cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
     cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
-    pkill xray 2>/dev/null; sleep 2
+    killall xray 2>/dev/null; sleep 2
     if [ -x "$XRAY_INIT" ]; then
       "$XRAY_INIT" start >/dev/null 2>&1
     else

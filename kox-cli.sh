@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02.7"
+KOX_VERSION="2026.05.02"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -1248,8 +1248,14 @@ kox_upgrade() {
   sep
   ok "Обновление завершено! Версия: ${W}v${REMOTE_VERSION}${N}"
   info "Перезапускаю Telegram бота..."
-  # Kill ALL bot instances first (pkill handles cases where PID file is stale/wrong)
-  pkill -f "kox-bot" 2>/dev/null || true
+  # Kill ALL bot instances first.
+  # BusyBox on Keenetic doesn't have pkill — match by /proc/*/cmdline.
+  for p in /proc/[0-9]*/cmdline; do
+    if grep -q "kox-bot" "$p" 2>/dev/null; then
+      pid=${p#/proc/}; pid=${pid%/cmdline}
+      kill "$pid" 2>/dev/null
+    fi
+  done
   sleep 2
   "$BOT_INIT" start >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось запустить бота"
   info "Изменения в консоли вступят в силу в следующем SSH-сеансе"
