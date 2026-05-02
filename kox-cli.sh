@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02.1"
+KOX_VERSION="2026.05.02"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -1248,7 +1248,10 @@ kox_upgrade() {
   sep
   ok "Обновление завершено! Версия: ${W}v${REMOTE_VERSION}${N}"
   info "Перезапускаю Telegram бота..."
-  "$BOT_INIT" restart >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось перезапустить бота"
+  # Kill ALL bot instances first (pkill handles cases where PID file is stale/wrong)
+  pkill -f "kox-bot" 2>/dev/null || true
+  sleep 2
+  "$BOT_INIT" start >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось запустить бота"
   info "Изменения в консоли вступят в силу в следующем SSH-сеансе"
 
   # Suggest loading domain lists if none loaded

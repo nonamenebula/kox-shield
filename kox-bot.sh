@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.1"
+KOX_VERSION="2026.05.02"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -1106,8 +1106,10 @@ h_kox_do_upgrade() {
 
   # Run upgrade and redirect to log
   /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1
+  # Allow time for pkill to terminate this process during restart
+  sleep 8
 
-  # If we reach here, upgrade failed or bot didn't restart
+  # If we reach here, upgrade failed or restart didn't kill us
   rm -f "$UPGRADE_LOCK"
   update_menu "$CHAT" "⚠️ <b>Что-то пошло не так.</b>
 
