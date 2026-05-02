@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02"
+KOX_VERSION="2026.05.02.11"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -1287,36 +1287,42 @@ kox_upgrade() {
 }
 
 # ── Server switching from CLI ─────────────────────────────────────────
-# urldecode helper (BusyBox-compatible)
-_urldecode() {
-  printf "%b" "$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\\\x/g')"
-}
-
 # Print a TAB-separated list of servers from subscription:
-# IDX<TAB>HOST<TAB>PORT<TAB>REMARK<TAB>PING<TAB>VLESS_URL
+# IDX<TAB>HOST<TAB>PORT<TAB>ENCODED_REMARK<TAB>PING<TAB>VLESS_URL
+# Note: REMARK stays URL-encoded in the file. Decoding happens at display
+# time via `printf "%b"` to avoid BusyBox subshell pipe quirks where
+# %b doesn't interpret \xHH inside $() of `while read` loops.
 _fetch_servers() {
   load_conf
   [ -z "${KOX_SUB_URL:-}" ] && { fail "URL подписки не задан"; info "Используйте: ${W}kox sub set <URL>${N}"; return 1; }
   local RAW DECODED
-  # Try via VPN proxy first, then direct
   RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
   [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
   [ -z "$RAW" ] && { fail "Не удалось получить подписку"; return 1; }
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-  local IDX=0 OUT=""
+  local IDX=0
   printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
     [ -z "$VLINE" ] && continue
-    local HOST PORT REMARK ENCODED_REMARK PING_MS
+    local HOST PORT ENCODED_REMARK PING_MS
     HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
     PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
     ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
-    REMARK=$(_urldecode "$ENCODED_REMARK")
-    [ -z "$REMARK" ] && REMARK="$HOST"
+    [ -z "$ENCODED_REMARK" ] && ENCODED_REMARK="$HOST"
     PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
     [ -z "$PING_MS" ] && PING_MS="—"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${IDX}" "${HOST}" "${PORT}" "${REMARK}" "${PING_MS}" "${VLINE}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${IDX}" "${HOST}" "${PORT}" "${ENCODED_REMARK}" "${PING_MS}" "${VLINE}"
     IDX=$((IDX+1))
   done
+}
+
+# Decode URL-encoded remark for display.
+# Inside single quotes, shell does no expansion, so sed sees `\\x` (2 chars)
+# and produces literal `\x` (backslash + x) in output, which `printf "%b"`
+# then interprets as hex byte. Using more backslashes breaks the chain.
+_decode_remark() {
+  local ESC
+  ESC=$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\x/g')
+  printf "%b" "$ESC"
 }
 
 kox_servers() {
@@ -1328,10 +1334,11 @@ kox_servers() {
   CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   _fetch_servers > /tmp/kox-cli-servers.txt
   [ ! -s /tmp/kox-cli-servers.txt ] && { warn "Серверы не найдены"; return 1; }
-  while IFS='	' read -r IDX HOST PORT REMARK PING_MS _; do
-    local MARK=" "
+  while IFS='	' read -r IDX HOST PORT ENC_REMARK PING_MS _; do
+    local MARK=" " REMARK
     [ "$HOST" = "$CURRENT_SRV" ] && MARK="${G}✓${N}"
-    printf "  %s ${W}[%s]${N}  %-50s ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
+    REMARK=$(_decode_remark "$ENC_REMARK")
+    printf "  %s ${W}[%s]${N}  %s\n        ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
       "$MARK" "$IDX" "$REMARK" "$HOST" "$PORT" "$PING_MS"
   done < /tmp/kox-cli-servers.txt
   sep
@@ -1353,12 +1360,13 @@ kox_switch() {
     [ ! -s /tmp/kox-cli-servers.txt ] && { fail "Не удалось получить список серверов"; return 1; }
   fi
 
-  local SRV_LINE HOST PORT REMARK VLESS_URL
+  local SRV_LINE HOST PORT ENC_REMARK REMARK VLESS_URL
   SRV_LINE=$(grep "^${IDX}	" /tmp/kox-cli-servers.txt | head -1)
   [ -z "$SRV_LINE" ] && { fail "Сервер #${IDX} не найден. Используйте ${W}kox servers${N}"; return 1; }
-  HOST=$(printf '%s' "$SRV_LINE"   | cut -f2)
-  PORT=$(printf '%s' "$SRV_LINE"   | cut -f3)
-  REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
+  HOST=$(printf '%s' "$SRV_LINE"     | cut -f2)
+  PORT=$(printf '%s' "$SRV_LINE"     | cut -f3)
+  ENC_REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
+  REMARK=$(_decode_remark "$ENC_REMARK")
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
   local CURRENT_SRV
@@ -1378,7 +1386,7 @@ kox_switch() {
   SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
   FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
   SPX=$(printf '%s'  "$PARAMS" | grep -o 'spx=[^&]*'  | cut -d= -f2)
-  SPX=$(_urldecode "${SPX:-/}")
+  SPX=$(_decode_remark "${SPX:-/}")
 
   [ -z "$UUID" ] || [ -z "$HOST" ] && { fail "Не удалось разобрать VLESS URL"; return 1; }
 
@@ -1404,11 +1412,22 @@ kox_switch() {
   info "2/4 — применяю новый конфиг..."
   cp "$CONF"    /tmp/kox-config-backup.json 2>/dev/null
   cp "$KOXCONF" /tmp/kox-conf-backup        2>/dev/null
-  conf_set KOX_SERVER "$HOST"
-  conf_set KOX_PORT   "${PORT:-443}"
-  conf_set KOX_UUID   "$UUID"
-  conf_set KOX_SNI    "${SNI:-www.google.com}"
-  conf_set KOX_FLOW   "$FLOW"
+  # Update kox.conf inline (no shared helper between scripts)
+  _kox_conf_set() {
+    local K="$1" V="$2"
+    if [ ! -f "$KOXCONF" ]; then
+      printf '%s="%s"\n' "$K" "$V" > "$KOXCONF"
+    elif grep -q "^${K}=" "$KOXCONF"; then
+      sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
+    else
+      printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
+    fi
+  }
+  _kox_conf_set KOX_SERVER "$HOST"
+  _kox_conf_set KOX_PORT   "${PORT:-443}"
+  _kox_conf_set KOX_UUID   "$UUID"
+  _kox_conf_set KOX_SNI    "${SNI:-www.google.com}"
+  _kox_conf_set KOX_FLOW   "$FLOW"
   local TMP_CONF=/tmp/kox-switch-tmp.json P="${PORT:-443}"
   jq --arg addr "$HOST" --argjson port "$P" \
      --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
