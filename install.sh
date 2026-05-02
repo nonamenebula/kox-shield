@@ -85,7 +85,7 @@ parse_vless_url() {
   VLESS_FP=$(get_param fp); [ -z "$VLESS_FP" ] && VLESS_FP="chrome"
   VLESS_FLOW=$(get_param flow); [ -z "$VLESS_FLOW" ] && VLESS_FLOW="xtls-rprx-vision"
 
-  [ -z "$VLESS_UUID" ] || [ -z "$VLESS_HOST" ] && fail "Не удалось разобрать VLESS URL"
+  { [ -z "$VLESS_UUID" ] || [ -z "$VLESS_HOST" ]; } && fail "Не удалось разобрать VLESS URL" || true
 }
 
 # URL-decode (%XX → байты UTF-8, + → пробел). Работает в busybox sh.
