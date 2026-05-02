@@ -63,7 +63,8 @@ kox_help() {
   printf "  ${G}kox list-ip${N}          — все IP/подсети\n\n"
   printf "  ${G}kox log${N}              — последние ошибки Xray\n"
   printf "  ${G}kox log-live${N}         — логи в реальном времени\n"
-  printf "  ${G}kox clear-log${N}        — очистить логи\n\n"
+  printf "  ${G}kox clear-log${N}        — очистить логи\n"
+  printf "  ${G}kox watchdog-log${N}     — лог авто-перезапуска Xray (fallback)\n\n"
   printf "  ${G}kox backup${N}           — создать резервную копию\n"
   printf "  ${G}kox restore [файл]${N}   — восстановить из бэкапа\n\n"
   printf "  ${G}kox list-cats${N}                   — список категорий (с номерами)\n"
@@ -1307,6 +1308,18 @@ case "$CMD" in
   upgrade)       kox_upgrade "$@" ;;
   clean-legacy)  kox_clean_legacy ;;
   clear-log)     kox_clear_log ;;
+  watchdog-log)
+    WD_LOG="/opt/var/log/kox-watchdog.log"
+    sep
+    info "${W}Лог watchdog (авто-fallback Xray):${N}"
+    sep
+    if [ -f "$WD_LOG" ]; then
+      tail -30 "$WD_LOG"
+    else
+      warn "Watchdog лог пуст — Xray ни разу не падал (хорошо!)"
+    fi
+    sep
+    ;;
   bot-setup)     kox_bot_setup ;;
   bot)           kox_bot ;;
   admin)         kox_admin "$@" ;;
