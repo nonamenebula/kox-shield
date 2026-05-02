@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02.11"
+KOX_VERSION="2026.05.02.12"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -409,12 +409,35 @@ kox_update_sub() {
   load_conf
   [ -z "${KOX_SUB_URL:-}" ] && fail "KOX_SUB_URL не задан в kox.conf" && return 1
   info "Обновляю подписку: ${W}${KOX_SUB_URL}${N}"
-  RAW=$(curl -sSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null | base64 -d 2>/dev/null || \
-        curl -sSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && fail "Не удалось получить данные подписки" && return 1
-  # Extract first vless:// entry
-  VLESS_LINE=$(printf '%s' "$RAW" | grep -m1 '^vless://')
-  [ -z "$VLESS_LINE" ] && fail "vless:// запись не найдена в подписке" && return 1
+
+  # Fetch subscription (try via VPN first, then direct)
+  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && { fail "Не удалось получить данные подписки"; return 1; }
+
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+  SERVERS_COUNT=$(printf '%s\n' "$DECODED" | grep -c '^vless://')
+
+  [ "$SERVERS_COUNT" -eq 0 ] && { fail "vless:// записи не найдены в подписке"; return 1; }
+
+  # Invalidate the CLI server cache so kox servers/switch use fresh data next time
+  rm -f /tmp/kox-cli-servers.txt
+
+  ok "Подписка содержит ${W}${SERVERS_COUNT}${N} сервер(ов)"
+
+  # Find the VLESS entry matching the currently configured server.
+  # Falls back to the first entry if the current server is not in the subscription
+  # (e.g., was removed or the subscription was replaced entirely).
+  CURRENT_HOST="${KOX_SERVER:-}"
+  VLESS_LINE=""
+  if [ -n "$CURRENT_HOST" ]; then
+    VLESS_LINE=$(printf '%s\n' "$DECODED" | grep "^vless://" | grep "@${CURRENT_HOST}:" | head -1)
+    [ -n "$VLESS_LINE" ] && info "Нашёл текущий сервер ${W}${CURRENT_HOST}${N} в подписке — обновляю его параметры"
+  fi
+  if [ -z "$VLESS_LINE" ]; then
+    VLESS_LINE=$(printf '%s\n' "$DECODED" | grep -m1 '^vless://')
+    warn "Текущий сервер не найден в подписке — использую первый сервер"
+  fi
 
   # Parse fields
   BODY=${VLESS_LINE#vless://}
@@ -423,47 +446,58 @@ kox_update_sub() {
   NEW_HOST=${HOSTPORT%%:*}; NEW_PORT=${HOSTPORT##*:}
   PARAMS=${BODY#*\?}; PARAMS=${PARAMS%%#*}
 
-  get_param() { printf '%s' "$PARAMS" | tr '&' '\n' | grep "^$1=" | cut -d= -f2 | head -1; }
-  NEW_PBK=$(get_param pbk); NEW_SID=$(get_param sid); NEW_SNI=$(get_param sni)
-  NEW_FP=$(get_param fp); NEW_FLOW=$(get_param flow)
+  _gp() { printf '%s' "$PARAMS" | tr '&' '\n' | grep "^$1=" | cut -d= -f2 | head -1; }
+  NEW_PBK=$(_gp pbk); NEW_SID=$(_gp sid); NEW_SNI=$(_gp sni)
+  NEW_FP=$(_gp fp); NEW_FLOW=$(_gp flow)
+  NEW_SPX=$(_decode_remark "$(_gp spx)")
+  [ -z "$NEW_SPX" ] && NEW_SPX="/"
 
-  [ -z "$NEW_HOST" ] || [ -z "$NEW_UUID" ] && fail "Не удалось разобрать VLESS URL" && return 1
+  [ -z "$NEW_HOST" ] || [ -z "$NEW_UUID" ] && { fail "Не удалось разобрать VLESS URL"; return 1; }
 
-  # Decode %2F and other URL-encoded chars in spiderX
-  NEW_SPX=$(get_param spx | sed 's/%2F/\//g; s/%2f/\//g')
-
-  # Update config.json using jq to avoid replacing inbound ports
+  # Update config.json using jq (preserves inbound ports)
   if [ -f "$CONF" ] && command -v jq >/dev/null 2>&1; then
-    jq --arg addr "$NEW_HOST" --argjson port "$NEW_PORT" \
+    jq --arg addr "$NEW_HOST" --argjson port "${NEW_PORT}" \
        --arg uuid "$NEW_UUID" --arg pbk "$NEW_PBK" \
-       --arg sni "$NEW_SNI" --arg sid "$NEW_SID" --arg spx "$NEW_SPX" '
+       --arg sni  "${NEW_SNI:-www.google.com}" --arg sid "$NEW_SID" \
+       --arg flow "$NEW_FLOW" --arg fp "${NEW_FP:-chrome}" \
+       --arg spx "$NEW_SPX" '
       .outbounds = [.outbounds[] |
         if .protocol == "vless" then
           .settings.vnext[0].address = $addr |
-          .settings.vnext[0].port = $port |
+          .settings.vnext[0].port = ($port | tonumber) |
           .settings.vnext[0].users[0].id = $uuid |
-          .settings.vnext[0].users[0].flow = "" |
-          (if $pbk != "" then .streamSettings.realitySettings.publicKey = $pbk else . end) |
-          (if $sni != "" then .streamSettings.realitySettings.serverName = $sni else . end) |
-          (if $sid != "" then .streamSettings.realitySettings.shortId = $sid else . end) |
-          (if $spx != "" then .streamSettings.realitySettings.spiderX = $spx else . end)
+          .settings.vnext[0].users[0].flow = $flow |
+          (if $pbk  != "" then .streamSettings.realitySettings.publicKey   = $pbk  else . end) |
+          (if $sni  != "" then .streamSettings.realitySettings.serverName  = $sni  else . end) |
+          (if $sid  != "" then .streamSettings.realitySettings.shortId     = $sid  else . end) |
+          (if $fp   != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
+          .streamSettings.realitySettings.spiderX = $spx
         else . end
       ]
     ' "$CONF" > /tmp/kox-conf-update.json && mv /tmp/kox-conf-update.json "$CONF"
-    ok "config.json обновлён (порты inbound сохранены)"
+    ok "config.json обновлён"
   fi
 
   # Update kox.conf
-  if [ -f "$KOXCONF" ]; then
-    sed -i "s|^KOX_SERVER=.*|KOX_SERVER=\"${NEW_HOST}\"|" "$KOXCONF"
-    sed -i "s|^KOX_PORT=.*|KOX_PORT=\"${NEW_PORT}\"|" "$KOXCONF"
-    sed -i "s|^KOX_UUID=.*|KOX_UUID=\"${NEW_UUID}\"|" "$KOXCONF"
-    [ -n "$NEW_SNI" ] && sed -i "s|^KOX_SNI=.*|KOX_SNI=\"${NEW_SNI}\"|" "$KOXCONF"
-    ok "kox.conf обновлён"
-  fi
+  _kox_conf_set() {
+    local K="$1" V="$2"
+    if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
+      sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
+    else
+      printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
+    fi
+  }
+  _kox_conf_set KOX_SERVER "$NEW_HOST"
+  _kox_conf_set KOX_PORT   "$NEW_PORT"
+  _kox_conf_set KOX_UUID   "$NEW_UUID"
+  [ -n "$NEW_SNI"  ] && _kox_conf_set KOX_SNI  "$NEW_SNI"
+  [ -n "$NEW_FLOW" ] && _kox_conf_set KOX_FLOW "$NEW_FLOW"
+  ok "kox.conf обновлён"
 
   kox_restart
   ok "Подписка обновлена: ${W}${NEW_HOST}:${NEW_PORT}${N}"
+  sep
+  info "Серверов в подписке: ${W}${SERVERS_COUNT}${N}. Используйте ${W}kox servers${N} чтобы увидеть все."
 }
 
 kox_cron_enable() {
@@ -1354,11 +1388,10 @@ kox_switch() {
   fi
 
   load_conf
-  if [ ! -f /tmp/kox-cli-servers.txt ]; then
-    info "Получаю список серверов..."
-    _fetch_servers > /tmp/kox-cli-servers.txt
-    [ ! -s /tmp/kox-cli-servers.txt ] && { fail "Не удалось получить список серверов"; return 1; }
-  fi
+  # Always fetch fresh — never use a stale cache for switching
+  info "Получаю актуальный список серверов из подписки..."
+  _fetch_servers > /tmp/kox-cli-servers.txt
+  [ ! -s /tmp/kox-cli-servers.txt ] && { fail "Не удалось получить список серверов"; return 1; }
 
   local SRV_LINE HOST PORT ENC_REMARK REMARK VLESS_URL
   SRV_LINE=$(grep "^${IDX}	" /tmp/kox-cli-servers.txt | head -1)
