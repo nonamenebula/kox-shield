@@ -77,6 +77,10 @@ kox_help() {
   printf "  ${G}kox list-update${N}                — обновить списки с GitHub\n\n"
   printf "  ${G}kox clean-legacy${N}     — удалить старые VPN (Kvass, Shadowsocks, SOCKS)\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
+  printf "  ${G}kox sub set <URL>${N}    — задать URL подписки\n"
+  printf "  ${G}kox sub get${N}          — показать текущий URL подписки\n"
+  printf "  ${G}kox servers${N}          — список серверов из подписки с пингом\n"
+  printf "  ${G}kox switch <N>${N}       — переключиться на сервер №N (с проверкой)\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
   printf "  ${G}kox upgrade${N}          — проверить и установить обновление KOX Shield\n\n"
@@ -1282,6 +1286,206 @@ kox_upgrade() {
   sep
 }
 
+# ── Server switching from CLI ─────────────────────────────────────────
+# urldecode helper (BusyBox-compatible)
+_urldecode() {
+  printf "%b" "$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\\\x/g')"
+}
+
+# Print a TAB-separated list of servers from subscription:
+# IDX<TAB>HOST<TAB>PORT<TAB>REMARK<TAB>PING<TAB>VLESS_URL
+_fetch_servers() {
+  load_conf
+  [ -z "${KOX_SUB_URL:-}" ] && { fail "URL подписки не задан"; info "Используйте: ${W}kox sub set <URL>${N}"; return 1; }
+  local RAW DECODED
+  # Try via VPN proxy first, then direct
+  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && { fail "Не удалось получить подписку"; return 1; }
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+  local IDX=0 OUT=""
+  printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
+    [ -z "$VLINE" ] && continue
+    local HOST PORT REMARK ENCODED_REMARK PING_MS
+    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
+    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
+    REMARK=$(_urldecode "$ENCODED_REMARK")
+    [ -z "$REMARK" ] && REMARK="$HOST"
+    PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
+    [ -z "$PING_MS" ] && PING_MS="—"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${IDX}" "${HOST}" "${PORT}" "${REMARK}" "${PING_MS}" "${VLINE}"
+    IDX=$((IDX+1))
+  done
+}
+
+kox_servers() {
+  sep
+  info "${W}Серверы из подписки:${N}"
+  sep
+  load_conf
+  local CURRENT_SRV
+  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  _fetch_servers > /tmp/kox-cli-servers.txt
+  [ ! -s /tmp/kox-cli-servers.txt ] && { warn "Серверы не найдены"; return 1; }
+  while IFS='	' read -r IDX HOST PORT REMARK PING_MS _; do
+    local MARK=" "
+    [ "$HOST" = "$CURRENT_SRV" ] && MARK="${G}✓${N}"
+    printf "  %s ${W}[%s]${N}  %-50s ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
+      "$MARK" "$IDX" "$REMARK" "$HOST" "$PORT" "$PING_MS"
+  done < /tmp/kox-cli-servers.txt
+  sep
+  info "Переключиться: ${W}kox switch <номер>${N}"
+}
+
+kox_switch() {
+  local IDX="${1:-}"
+  if [ -z "$IDX" ] || ! printf '%s' "$IDX" | grep -qE '^[0-9]+$'; then
+    fail "Использование: ${W}kox switch <номер>${N}"
+    info "Сначала посмотрите список: ${W}kox servers${N}"
+    return 1
+  fi
+
+  load_conf
+  if [ ! -f /tmp/kox-cli-servers.txt ]; then
+    info "Получаю список серверов..."
+    _fetch_servers > /tmp/kox-cli-servers.txt
+    [ ! -s /tmp/kox-cli-servers.txt ] && { fail "Не удалось получить список серверов"; return 1; }
+  fi
+
+  local SRV_LINE HOST PORT REMARK VLESS_URL
+  SRV_LINE=$(grep "^${IDX}	" /tmp/kox-cli-servers.txt | head -1)
+  [ -z "$SRV_LINE" ] && { fail "Сервер #${IDX} не найден. Используйте ${W}kox servers${N}"; return 1; }
+  HOST=$(printf '%s' "$SRV_LINE"   | cut -f2)
+  PORT=$(printf '%s' "$SRV_LINE"   | cut -f3)
+  REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
+  VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
+
+  local CURRENT_SRV
+  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  if [ "$HOST" = "$CURRENT_SRV" ]; then
+    ok "Уже подключено к этому серверу: ${W}${REMARK}${N}"
+    return 0
+  fi
+
+  # Parse VLESS URL
+  local UUID PARAMS SNI FLOW PBKEY SID FP SPX
+  UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
+  PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
+  SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
+  FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+  PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
+  SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
+  FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
+  SPX=$(printf '%s'  "$PARAMS" | grep -o 'spx=[^&]*'  | cut -d= -f2)
+  SPX=$(_urldecode "${SPX:-/}")
+
+  [ -z "$UUID" ] || [ -z "$HOST" ] && { fail "Не удалось разобрать VLESS URL"; return 1; }
+
+  sep
+  info "${W}Переключаюсь на: ${REMARK}${N}"
+  info "Адрес: ${W}${HOST}:${PORT:-443}${N}"
+  sep
+
+  # Step 1: pre-flight
+  info "1/4 — проверяю доступность сервера..."
+  local PRE_OK=0
+  for i in 1 2 3; do
+    if curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 "https://${HOST}:${PORT:-443}/" 2>/dev/null; then
+      PRE_OK=1; break
+    fi
+    sleep 1
+  done
+  [ "$PRE_OK" = "0" ] && ping -c 1 -W 2 "$HOST" >/dev/null 2>&1 && PRE_OK=1
+  [ "$PRE_OK" = "0" ] && { fail "Сервер недоступен. Текущий VPN не тронут."; return 1; }
+  ok "Сервер доступен"
+
+  # Step 2: backup + apply config
+  info "2/4 — применяю новый конфиг..."
+  cp "$CONF"    /tmp/kox-config-backup.json 2>/dev/null
+  cp "$KOXCONF" /tmp/kox-conf-backup        2>/dev/null
+  conf_set KOX_SERVER "$HOST"
+  conf_set KOX_PORT   "${PORT:-443}"
+  conf_set KOX_UUID   "$UUID"
+  conf_set KOX_SNI    "${SNI:-www.google.com}"
+  conf_set KOX_FLOW   "$FLOW"
+  local TMP_CONF=/tmp/kox-switch-tmp.json P="${PORT:-443}"
+  jq --arg addr "$HOST" --argjson port "$P" \
+     --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
+     --arg flow "$FLOW" --arg pbkey "$PBKEY" \
+     --arg sid "$SID" --arg fp "${FP:-chrome}" \
+     --arg spx "${SPX:-/}" '
+    .outbounds = [.outbounds[] |
+      if .protocol == "vless" then
+        .settings.vnext[0].address = $addr |
+        .settings.vnext[0].port = ($port | tonumber) |
+        .settings.vnext[0].users[0].id = $uuid |
+        .settings.vnext[0].users[0].flow = $flow |
+        .streamSettings.realitySettings.serverName = $sni |
+        (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
+        (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
+        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
+        .streamSettings.realitySettings.spiderX = $spx
+      else . end
+    ]
+  ' "$CONF" > "$TMP_CONF" 2>/dev/null
+  [ -s "$TMP_CONF" ] && mv "$TMP_CONF" "$CONF"
+  ok "Конфиг применён"
+
+  # Step 3: restart xray
+  info "3/4 — перезапускаю Xray..."
+  killall xray 2>/dev/null; sleep 2
+  if [ -x /opt/etc/init.d/S24xray ]; then
+    /opt/etc/init.d/S24xray start >/dev/null 2>&1
+  else
+    /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+  fi
+  local XRAY_UP=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && { XRAY_UP=1; break; }
+    sleep 1
+  done
+  [ "$XRAY_UP" = "1" ] && ok "Xray запущен" || warn "Xray не открыл порт 10808"
+
+  # Step 4: tunnel test
+  info "4/4 — тестирую VPN-туннель..."
+  local TUNNEL_OK=0 HTTP_CODE=000
+  for i in 1 2 3 4; do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+      -x socks5h://127.0.0.1:10809 --max-time 3 \
+      "https://api.telegram.org" 2>/dev/null)
+    case "$HTTP_CODE" in
+      000|"") sleep 1 ;;
+      *)      TUNNEL_OK=1; break ;;
+    esac
+  done
+
+  if [ "$TUNNEL_OK" = "1" ]; then
+    ok "VPN-туннель работает (HTTP $HTTP_CODE)"
+    sep
+    ok "${W}Переключено на: ${REMARK}${N}"
+    sep
+    return 0
+  fi
+
+  warn "Туннель не отвечает — выполняю откат..."
+  cp /tmp/kox-config-backup.json "$CONF"    2>/dev/null
+  cp /tmp/kox-conf-backup        "$KOXCONF" 2>/dev/null
+  killall xray 2>/dev/null; sleep 2
+  if [ -x /opt/etc/init.d/S24xray ]; then
+    /opt/etc/init.d/S24xray start >/dev/null 2>&1
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && break
+    sleep 1
+  done
+  sep
+  fail "Переключение отменено — Reality-туннель не работает на новом сервере"
+  info "Восстановлен предыдущий конфиг"
+  sep
+  return 1
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 CMD="${1:-}"
 shift 2>/dev/null || true
@@ -1335,6 +1539,8 @@ case "$CMD" in
   list-check)    kox_list_check ;;
   list-update)   kox_list_update ;;
   upgrade)       kox_upgrade "$@" ;;
+  servers)       kox_servers ;;
+  switch)        kox_switch "$@" ;;
   clean-legacy)  kox_clean_legacy ;;
   clear-log)     kox_clear_log ;;
   watchdog-log)
