@@ -155,7 +155,7 @@ install_packages() {
   info "Обновляю список пакетов..."
   opkg update >/dev/null 2>&1 || warn "opkg update завершился с ошибкой"
 
-  for PKG in xray-core curl jq; do
+  for PKG in xray-core curl jq cron; do
     if opkg list-installed 2>/dev/null | grep -q "^${PKG} "; then
       ok "${PKG} уже установлен"
     else
@@ -164,12 +164,27 @@ install_packages() {
     fi
   done
 
-  # Инициализация xray
-  if [ -f "${INIT}/S24xray" ]; then
+  # Создать xray init скрипт если не существует
+  if [ ! -f "${INIT}/S24xray" ]; then
+    info "Создаю xray init скрипт..."
+    cat > "${INIT}/S24xray" << 'INITSCRIPT'
+#!/bin/sh
+ENABLED=yes
+PROCS=xray
+ARGS="-config /opt/etc/xray/config.json"
+PIDFILE=/var/run/xray.pid
+. /opt/etc/init.d/rc.func
+INITSCRIPT
+    chmod +x "${INIT}/S24xray"
+    ok "Xray init скрипт создан"
+  else
     sed -i 's/^ENABLED=no/ENABLED=yes/' "${INIT}/S24xray" 2>/dev/null || true
     ok "Xray init скрипт активирован"
-  else
-    warn "Xray init скрипт не найден — возможно xray-core назван иначе"
+  fi
+
+  # Запустить crond если не работает
+  if ! pgrep crond >/dev/null 2>&1; then
+    "${INIT}/S10cron" start 2>/dev/null || crond -c /opt/var/spool/cron/crontabs 2>/dev/null || true
   fi
 }
 
@@ -379,8 +394,10 @@ WATCHDOG
 
   # Добавить watchdog в cron (каждую минуту)
   CRON_LINE="* * * * * /opt/etc/kox-watchdog.sh"
+  mkdir -p /opt/var/spool/cron/crontabs
   if ! crontab -l 2>/dev/null | grep -q kox-watchdog; then
-    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab - 2>/dev/null || \
+      echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root
     ok "Watchdog добавлен в cron (каждую минуту)"
   else
     ok "Watchdog уже в cron"
@@ -412,15 +429,20 @@ download_scripts() {
 
 # ── Запуск Xray ───────────────────────────────────────────────────────────────
 start_xray() {
+  info "Запускаю Xray..."
+  # Остановить если уже запущен
+  pkill xray 2>/dev/null || true; sleep 1
   if [ -f "${INIT}/S24xray" ]; then
-    info "Запускаю Xray..."
-    "${INIT}/S24xray" restart 2>/dev/null || true
-    sleep 3
-    if pgrep xray >/dev/null 2>&1; then
-      ok "Xray запущен (PID: $(pgrep xray | head -1))"
-    else
-      warn "Xray не запустился — проверьте: kox log"
-    fi
+    "${INIT}/S24xray" start 2>/dev/null || true
+  else
+    # Прямой запуск
+    /opt/sbin/xray -config "${XRAY_CONF}/config.json" >> /opt/var/log/xray-err.log 2>&1 &
+  fi
+  sleep 3
+  if pgrep xray >/dev/null 2>&1; then
+    ok "Xray запущен (PID: $(pgrep xray | head -1))"
+  else
+    warn "Xray не запустился — проверьте: kox log"
   fi
 }
 
