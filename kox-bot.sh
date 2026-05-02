@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.2"
+KOX_VERSION="2026.05.02"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -420,9 +420,10 @@ h_do_switch() {
   PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
   SNI=$(printf '%s' "$PARAMS"  | grep -o 'sni=[^&]*'  | cut -d= -f2)
   FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-  PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbkey=[^&]*'| cut -d= -f2)
-  SID=$(printf '%s' "$PARAMS"  | grep -o 'sid=[^&]*'  | cut -d= -f2)
-  FP=$(printf '%s' "$PARAMS"   | grep -o 'fp=[^&]*'   | cut -d= -f2)
+  # 3x-ui uses 'pbk=' (not 'pbkey=') for the Reality public key
+  PBKEY=$(printf '%s' "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
+  SID=$(printf '%s' "$PARAMS"   | grep -o 'sid=[^&]*'  | cut -d= -f2)
+  FP=$(printf '%s' "$PARAMS"    | grep -o 'fp=[^&]*'   | cut -d= -f2)
 
   if [ -z "$UUID" ] || [ -z "$HOST" ]; then
     update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
