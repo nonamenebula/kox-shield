@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.5"
+KOX_VERSION="2026.05.02.6"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -490,17 +490,26 @@ h_do_switch() {
     mv "$TMP_CONF" "$CONF"
   fi
 
-  # Restart xray
+  # Restart xray (do stop/start manually to control timing)
+  pkill xray 2>/dev/null
+  sleep 2
   if [ -x "$XRAY_INIT" ]; then
-    "$XRAY_INIT" restart >/dev/null 2>&1
+    "$XRAY_INIT" start >/dev/null 2>&1
   else
-    pkill xray 2>/dev/null; sleep 1
     /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
   fi
-  sleep 3
 
-  # Check if xray is up
-  if pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null; then
+  # Poll for xray to come up (up to 12 seconds)
+  XRAY_UP=0
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null; then
+      XRAY_UP=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$XRAY_UP" = "1" ]; then
     update_menu "$CHAT" "✅ <b>Переключено на сервер!</b>
 
 <b>${REMARK}</b>
@@ -515,13 +524,17 @@ Xray запущен, порт 10808 активен." \
     # Auto-revert
     cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
     cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
+    pkill xray 2>/dev/null; sleep 2
     if [ -x "$XRAY_INIT" ]; then
-      "$XRAY_INIT" restart >/dev/null 2>&1
+      "$XRAY_INIT" start >/dev/null 2>&1
     else
-      pkill xray 2>/dev/null; sleep 1
       /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
     fi
-    sleep 2
+    # Wait for rollback xray to come up too
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null && break
+      sleep 1
+    done
     update_menu "$CHAT" "❌ <b>Переключение не удалось — откат!</b>
 
 Xray не запустился с новым сервером.
@@ -1121,15 +1134,24 @@ h_kox_do_upgrade() {
 
   # Run upgrade and redirect to log
   /opt/bin/kox upgrade --force >> /opt/var/log/kox-bot.log 2>&1
-  # Allow time for pkill to terminate this process during restart
-  sleep 8
+  UPGRADE_RC=$?
+  # Allow time for pkill to terminate this process during restart.
+  # If we're still alive after this, the upgrade did NOT call kill on us — meaning
+  # either the script failed early, or the new bot was already started normally
+  # (in which case our parent kox-cli already pkill'd us; we should never get here).
+  sleep 12
 
-  # If we reach here, upgrade failed or restart didn't kill us
+  # If we reach here, the upgrade likely failed before reaching restart
   rm -f "$UPGRADE_LOCK"
-  update_menu "$CHAT" "⚠️ <b>Что-то пошло не так.</b>
+  if [ "$UPGRADE_RC" -ne 0 ]; then
+    update_menu "$CHAT" "⚠️ <b>Обновление завершилось с ошибкой.</b>
 
-Проверьте: <code>kox upgrade</code> в SSH.
+Проверьте лог: <code>tail -50 /opt/var/log/kox-bot.log</code>
+Или попробуйте вручную: <code>kox upgrade</code> в SSH.
+
 Текущая версия: <code>v${KOX_VERSION}</code>"
+  fi
+  # If RC=0, the new bot is already running — silently exit
 }
 
 h_settings() {
