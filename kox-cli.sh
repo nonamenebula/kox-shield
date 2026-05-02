@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02.12"
+KOX_VERSION="2026.05.02.13"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -81,6 +81,7 @@ kox_help() {
   printf "  ${G}kox sub get${N}          — показать текущий URL подписки\n"
   printf "  ${G}kox servers${N}          — список серверов из подписки с пингом\n"
   printf "  ${G}kox switch <N>${N}       — переключиться на сервер №N (с проверкой)\n"
+  printf "  ${G}kox switch-auto${N}      — авто-переключение на первый рабочий сервер\n"
   printf "  ${G}kox cron-on${N}          — авто-обновление (ежедневно 04:00)\n"
   printf "  ${G}kox cron-off${N}         — отключить авто-обновление\n"
   printf "  ${G}kox upgrade${N}          — проверить и установить обновление KOX Shield\n\n"
@@ -1538,6 +1539,154 @@ kox_switch() {
   return 1
 }
 
+# ── Auto-switch: find and switch to best reachable server ─────────────
+# Usage: kox switch-auto [--quiet]
+# Called by watchdog or manually. Finds the first server in the
+# subscription that passes a pre-flight TCP check, excluding the
+# currently broken one, and switches to it.
+# Returns 0 on success (exits with new server name in stdout if --quiet).
+kox_switch_auto() {
+  local QUIET="${1:-}"
+  load_conf
+  [ -z "${KOX_SUB_URL:-}" ] && { fail "KOX_SUB_URL не задан"; return 1; }
+
+  [ "$QUIET" != "--quiet" ] && { sep; info "${W}Авто-переключение на резервный сервер...${N}"; sep; }
+
+  # Fetch subscription
+  local RAW DECODED
+  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && { fail "Не удалось получить подписку"; return 1; }
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+
+  # Current active server — skip it (it's presumably broken)
+  local CURRENT_HOST
+  CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+
+  # Save server list to temp file for iteration
+  printf '%s\n' "$DECODED" | grep '^vless://' > /tmp/kox-auto-servers.txt
+  local TOTAL
+  TOTAL=$(wc -l < /tmp/kox-auto-servers.txt | tr -d ' ')
+  [ "$TOTAL" -eq 0 ] && { fail "Серверов в подписке нет"; return 1; }
+
+  [ "$QUIET" != "--quiet" ] && info "Проверяю ${W}${TOTAL}${N} серверов (текущий: ${W}${CURRENT_HOST}${N} пропускаю)..."
+
+  local SWITCHED=0
+  while IFS= read -r VLINE; do
+    [ -z "$VLINE" ] && continue
+    local HOST PORT UUID PARAMS SNI FLOW PBKEY SID FP SPX ENC_REMARK REMARK
+    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
+    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+
+    # Skip current server
+    [ "$HOST" = "$CURRENT_HOST" ] && continue
+
+    # Quick pre-flight: TCP+TLS reachability
+    [ "$QUIET" != "--quiet" ] && printf "  Проверяю %s:%s ... " "$HOST" "${PORT:-443}"
+    local OK=0
+    curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
+      "https://${HOST}:${PORT:-443}/" 2>/dev/null && OK=1
+    [ "$OK" = "0" ] && ping -c 1 -W 2 "$HOST" >/dev/null 2>&1 && OK=1
+
+    if [ "$OK" = "0" ]; then
+      [ "$QUIET" != "--quiet" ] && printf "${R}недоступен${N}\n"
+      continue
+    fi
+    [ "$QUIET" != "--quiet" ] && printf "${G}доступен${N}\n"
+
+    # Parse VLESS fields
+    UUID=$(printf '%s' "$VLINE" | sed 's|vless://\([^@]*\)@.*|\1|')
+    PARAMS=$(printf '%s' "$VLINE" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
+    SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
+    FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+    PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
+    SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
+    FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
+    SPX=$(_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
+    [ -z "$SPX" ] && SPX="/"
+    ENC_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
+    REMARK=$(_decode_remark "$ENC_REMARK")
+    [ -z "$REMARK" ] && REMARK="$HOST"
+
+    # Apply new config
+    _kox_conf_set() {
+      local K="$1" V="$2"
+      if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
+        sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
+      else
+        printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
+      fi
+    }
+    cp "$CONF" /tmp/kox-autoswitch-backup.json 2>/dev/null
+    cp "$KOXCONF" /tmp/kox-autoswitch-conf-backup 2>/dev/null
+    _kox_conf_set KOX_SERVER "$HOST"
+    _kox_conf_set KOX_PORT   "${PORT:-443}"
+    _kox_conf_set KOX_UUID   "$UUID"
+    _kox_conf_set KOX_SNI    "${SNI:-www.google.com}"
+    _kox_conf_set KOX_FLOW   "$FLOW"
+
+    local TMP_CONF=/tmp/kox-autoswitch-tmp.json P="${PORT:-443}"
+    jq --arg addr "$HOST" --argjson port "$P" \
+       --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
+       --arg flow "$FLOW" --arg pbkey "$PBKEY" \
+       --arg sid "$SID" --arg fp "${FP:-chrome}" \
+       --arg spx "${SPX:-/}" '
+      .outbounds = [.outbounds[] |
+        if .protocol == "vless" then
+          .settings.vnext[0].address = $addr |
+          .settings.vnext[0].port = ($port | tonumber) |
+          .settings.vnext[0].users[0].id = $uuid |
+          .settings.vnext[0].users[0].flow = $flow |
+          .streamSettings.realitySettings.serverName = $sni |
+          (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
+          (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
+          (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
+          .streamSettings.realitySettings.spiderX = $spx
+        else . end
+      ]
+    ' "$CONF" > "$TMP_CONF" 2>/dev/null
+    [ -s "$TMP_CONF" ] && mv "$TMP_CONF" "$CONF"
+
+    # Restart xray
+    killall xray 2>/dev/null; sleep 2
+    [ -x /opt/etc/init.d/S24xray ] && /opt/etc/init.d/S24xray start >/dev/null 2>&1 || \
+      /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+
+    # Wait for xray to come up
+    local XRAY_UP=0
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && { XRAY_UP=1; break; }
+      sleep 1
+    done
+
+    # End-to-end tunnel test
+    local TUNNEL_OK=0 HTTP_CODE=000
+    if [ "$XRAY_UP" = "1" ]; then
+      for i in 1 2 3 4; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+          -x socks5h://127.0.0.1:10809 --max-time 5 \
+          "https://api.telegram.org" 2>/dev/null)
+        case "$HTTP_CODE" in 000|"") sleep 1 ;; *) TUNNEL_OK=1; break ;; esac
+      done
+    fi
+
+    if [ "$TUNNEL_OK" = "1" ]; then
+      SWITCHED=1
+      [ "$QUIET" != "--quiet" ] && { sep; ok "${W}Переключено на: ${REMARK}${N}  (${HOST}:${PORT:-443})"; sep; }
+      printf '%s' "$REMARK"  # stdout for watchdog to capture
+      break
+    else
+      # Tunnel failed — restore and try next
+      cp /tmp/kox-autoswitch-backup.json "$CONF" 2>/dev/null
+      cp /tmp/kox-autoswitch-conf-backup "$KOXCONF" 2>/dev/null
+      [ "$QUIET" != "--quiet" ] && warn "Туннель к $HOST не прошёл — пробую следующий"
+    fi
+  done < /tmp/kox-auto-servers.txt
+
+  [ "$SWITCHED" = "0" ] && { fail "Ни один резервный сервер не прошёл тест"; return 1; }
+  return 0
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 CMD="${1:-}"
 shift 2>/dev/null || true
@@ -1593,6 +1742,7 @@ case "$CMD" in
   upgrade)       kox_upgrade "$@" ;;
   servers)       kox_servers ;;
   switch)        kox_switch "$@" ;;
+  switch-auto)   kox_switch_auto "$@" ;;
   clean-legacy)  kox_clean_legacy ;;
   clear-log)     kox_clear_log ;;
   watchdog-log)
