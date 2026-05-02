@@ -3,17 +3,18 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.04.19"
+KOX_VERSION="2026.05.02"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
 ERRLOG="/opt/var/log/xray-err.log"
 BOT_LOG="/opt/var/log/kox-bot.log"
-OFFSET_FILE="/tmp/kox-bot-offset"
+# Persistent offset: survives reboots, prevents old callback replay
+OFFSET_FILE="/opt/etc/xray/.kox-bot-offset"
 LOCK_FILE="/tmp/kox-bot.lock"
 WAIT_FILE="/tmp/kox-bot-wait"
 # Sticky message: one message per chat, always edited in-place
-STICKY_FILE="/tmp/kox-bot-sticky"
+STICKY_FILE="/opt/etc/xray/.kox-bot-sticky"
 XRAY_INIT="/opt/etc/init.d/S24xray"
 DOMAIN_MARKER="kox-custom-marker"
 IP_MARKER="192.0.2.255/32"
@@ -168,7 +169,7 @@ main_keyboard() {
   printf '%s' '{
     "inline_keyboard":[
       [{"text":"📊 Статус","callback_data":"status"},
-       {"text":"🌐 Сервер","callback_data":"server"}],
+       {"text":"🌐 Серверы →","callback_data":"servers_menu"}],
       [{"text":"✅ Вкл VPN","callback_data":"do_on"},
        {"text":"❌ Выкл VPN","callback_data":"confirm_off"}],
       [{"text":"🔄 Рестарт Xray","callback_data":"confirm_restart"},
@@ -252,6 +253,242 @@ h_server() {
 UUID:  <code>${UUID:-?}</code>
 SNI:   <code>${SNI:-}</code>
 Flow:  <code>${FLOW:-}</code>"
+}
+
+# ── Server menu: current info + switch option ──────────────────────────────
+h_servers_menu() {
+  local CHAT="$1"
+  local SRV PORT UUID SNI SUB_URL
+  SRV=$(grep -m1 '"address"' "$CONF" | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  PORT=$(grep -m1 '"port"' "$CONF" | sed 's/.*"port": *\([0-9]*\).*/\1/')
+  UUID=$(grep -m1 '"id"' "$CONF" | sed 's/.*"id": *"\([^"]*\)".*/\1/')
+  SNI=$(grep -m1 '"serverName"' "$CONF" | sed 's/.*"serverName": *"\([^"]*\)".*/\1/')
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  SUB_URL="${KOX_SUB_URL:-}"
+
+  local KBD
+  if [ -n "$SUB_URL" ]; then
+    KBD='{"inline_keyboard":[[{"text":"🔀 Сменить сервер из подписки","callback_data":"switch_list"}],[{"text":"◀️ Главное меню","callback_data":"menu"}]]}'
+  else
+    KBD='{"inline_keyboard":[[{"text":"◀️ Главное меню","callback_data":"menu"}]]}'
+  fi
+
+  update_menu "$CHAT" "🌐 <b>Текущий VLESS сервер:</b>
+
+Адрес: <code>${SRV:-?}</code>
+Порт:  <code>${PORT:-443}</code>
+UUID:  <code>${UUID:-?}</code>
+SNI:   <code>${SNI:-}</code>
+Подписка: <code>${SUB_URL:-не задана}</code>" "$KBD"
+}
+
+# Fetch subscription, parse server list, show switch keyboard
+h_switch_list() {
+  local CHAT="$1"
+  send_typing "$CHAT"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  local SUB_URL="${KOX_SUB_URL:-}"
+
+  if [ -z "$SUB_URL" ]; then
+    update_menu "$CHAT" "❌ <b>URL подписки не задан</b>
+
+Задайте его на роутере:
+<code>kox sub set https://kox.nonamenebula.ru/c/TOKEN</code>
+
+Или введите команду: <code>/sub URL</code>" "$(back_keyboard)"
+    return
+  fi
+
+  local RAW
+  RAW=$(tg_curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
+  if [ -z "$RAW" ]; then
+    update_menu "$CHAT" "❌ Не удалось получить подписку
+
+URL: <code>${SUB_URL}</code>
+Проверьте VPN и URL подписки." "$(back_keyboard)"
+    return
+  fi
+
+  # Decode base64 (BusyBox base64 -d)
+  local DECODED
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+
+  # Extract vless:// lines
+  local SERVERS
+  SERVERS=$(printf '%s' "$DECODED" | grep -o 'vless://[^[:space:]]*' | head -10)
+  if [ -z "$SERVERS" ]; then
+    update_menu "$CHAT" "❌ Серверы не найдены в подписке.
+
+Возможно, подписка вернула HTML или некорректный формат.
+URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
+    return
+  fi
+
+  # Build keyboard with server list
+  local BUTTONS='[{"text":"◀️ Назад","callback_data":"servers_menu"}]'
+  local I=0
+  local CURRENT_SRV
+  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+
+  # Save server list to tmp file for callback lookup
+  printf '' > /tmp/kox-servers.txt
+  printf '%s\n' "$SERVERS" | while IFS= read -r VLESS_URL; do
+    [ -z "$VLESS_URL" ] && continue
+    local HOSTPORT REMARK HOST
+    HOSTPORT=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^?]*\).*|\1|')
+    HOST=$(printf '%s' "$HOSTPORT" | cut -d: -f1)
+    REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
+      python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || \
+      printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//')
+    [ -z "$REMARK" ] && REMARK="$HOST"
+    local IDX=$((I))
+    printf '%s|%s\n' "$IDX" "$VLESS_URL" >> /tmp/kox-servers.txt
+    local MARK=""
+    [ "$HOST" = "$CURRENT_SRV" ] && MARK=" ✅"
+    I=$((I+1))
+  done
+
+  # Build inline keyboard from saved list
+  local ROWS=""
+  local N=0
+  while IFS='|' read -r IDX VLESS_URL; do
+    [ -z "$VLESS_URL" ] && continue
+    local HOST REMARK
+    HOST=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^:?]*\).*|\1|')
+    REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
+      python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || echo "$HOST")
+    [ -z "$REMARK" ] && REMARK="$HOST"
+    local MARK=""
+    [ "$HOST" = "$CURRENT_SRV" ] && MARK=" ✅"
+    ROWS="${ROWS},[{\"text\":\"${MARK}${REMARK}\",\"callback_data\":\"switch_srv_${IDX}\"}]"
+    N=$((N+1))
+  done < /tmp/kox-servers.txt
+
+  if [ "$N" -eq 0 ]; then
+    update_menu "$CHAT" "❌ Не удалось разобрать серверы из подписки." "$(back_keyboard)"
+    return
+  fi
+
+  local KBD
+  KBD="{\"inline_keyboard\":[${ROWS#,},[{\"text\":\"◀️ Назад\",\"callback_data\":\"servers_menu\"}]]}"
+  update_menu "$CHAT" "🔀 <b>Выберите сервер из подписки:</b>
+
+✅ — текущий активный сервер
+Всего: <b>${N}</b> серверов" "$KBD"
+}
+
+# Actually switch to the selected server (safe: backup + restore on failure)
+h_do_switch() {
+  local CHAT="$1" IDX="$2"
+
+  if [ ! -f /tmp/kox-servers.txt ]; then
+    update_menu "$CHAT" "❌ Список серверов устарел. Нажмите «Сменить сервер» снова." "$(back_keyboard)"
+    return
+  fi
+
+  local VLESS_URL
+  VLESS_URL=$(grep "^${IDX}|" /tmp/kox-servers.txt | cut -d'|' -f2-)
+  if [ -z "$VLESS_URL" ]; then
+    update_menu "$CHAT" "❌ Сервер #${IDX} не найден. Нажмите «Сменить сервер» снова." "$(back_keyboard)"
+    return
+  fi
+
+  # Parse VLESS URL
+  local UUID HOSTPORT HOST PORT PARAMS SNI FLOW
+  UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
+  HOSTPORT=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^?]*\).*|\1|')
+  HOST=$(printf '%s' "$HOSTPORT" | cut -d: -f1)
+  PORT=$(printf '%s' "$HOSTPORT" | cut -d: -f2)
+  PARAMS=$(printf '%s' "$VLESS_URL" | grep -o '?[^#]*' | sed 's/^?//')
+  SNI=$(printf '%s' "$PARAMS" | grep -o 'sni=[^&]*' | cut -d= -f2)
+  FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+  REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
+    python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || echo "$HOST")
+
+  if [ -z "$UUID" ] || [ -z "$HOST" ]; then
+    update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
+    return
+  fi
+
+  send_typing "$CHAT"
+  update_menu "$CHAT" "⏳ <b>Переключаю на сервер...</b>
+
+<b>${REMARK}</b>
+<code>${HOST}:${PORT:-443}</code>
+
+Создаю резервную копию конфига..."
+
+  # Backup current config and kox.conf
+  cp "$CONF" /tmp/kox-config-backup.json 2>/dev/null
+  cp "$KOXCONF" /tmp/kox-conf-backup 2>/dev/null
+
+  # Update kox.conf
+  conf_set KOX_SERVER "$HOST"
+  conf_set KOX_PORT "${PORT:-443}"
+  conf_set KOX_UUID "$UUID"
+  conf_set KOX_SNI "${SNI:-www.google.com}"
+  conf_set KOX_FLOW "${FLOW:-xtls-rprx-vision}"
+
+  # Update config.json via jq (properly preserves inbound ports)
+  local TMP_CONF=/tmp/kox-switch-tmp.json
+  local P="${PORT:-443}"
+  jq --arg addr "$HOST" --argjson port "$P" \
+     --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
+     --arg flow "${FLOW:-xtls-rprx-vision}" '
+    .outbounds = [.outbounds[] |
+      if .protocol == "vless" then
+        .settings.vnext[0].address = $addr |
+        .settings.vnext[0].port = ($port | tonumber) |
+        .settings.vnext[0].users[0].id = $uuid |
+        .settings.vnext[0].users[0].flow = $flow |
+        (if $sni != "" then .streamSettings.realitySettings.serverName = $sni else . end)
+      else . end
+    ]
+  ' "$CONF" > "$TMP_CONF" 2>/dev/null
+  if [ -s "$TMP_CONF" ]; then
+    mv "$TMP_CONF" "$CONF"
+  fi
+
+  # Restart xray
+  if [ -x "$XRAY_INIT" ]; then
+    "$XRAY_INIT" restart >/dev/null 2>&1
+  else
+    pkill xray 2>/dev/null; sleep 1
+    /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+  fi
+  sleep 3
+
+  # Check if xray is up
+  if pgrep xray >/dev/null 2>&1 && nc -z 127.0.0.1 10808 2>/dev/null; then
+    update_menu "$CHAT" "✅ <b>Переключено на сервер!</b>
+
+<b>${REMARK}</b>
+Адрес: <code>${HOST}</code>
+Порт:  <code>${PORT:-443}</code>
+UUID:  <code>${UUID}</code>
+SNI:   <code>${SNI:-www.google.com}</code>
+
+Xray запущен, порт 10808 активен." \
+      "$(main_keyboard)"
+  else
+    # Auto-revert
+    cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
+    cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
+    if [ -x "$XRAY_INIT" ]; then
+      "$XRAY_INIT" restart >/dev/null 2>&1
+    else
+      pkill xray 2>/dev/null; sleep 1
+      /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+    fi
+    sleep 2
+    update_menu "$CHAT" "❌ <b>Переключение не удалось — откат!</b>
+
+Xray не запустился с новым сервером.
+Восстановлен предыдущий конфиг.
+
+Попробуйте другой сервер или проверьте логи." \
+      "$(main_keyboard)"
+  fi
 }
 
 h_on() {
@@ -460,7 +697,8 @@ h_help() {
 
 <b>Меню кнопок:</b>
 📊 Статус — Xray, iptables, VPN
-🌐 Сервер — параметры VLESS
+🌐 Серверы — текущий сервер + переключение
+🔀 Сменить сервер — список из подписки
 ✅ Вкл / ❌ Выкл — туннель
 🔄 Рестарт — перезапуск Xray <i>(с подтверждением)</i>
 🔧 Тест — проверка config.json
@@ -478,6 +716,14 @@ h_help() {
 <code>/del example.com</code>
 <code>/check example.com</code>
 <code>/status</code>  <code>/on</code>  <code>/off</code>
+<code>/update</code> — проверить и обновить KOX
+<code>/sub URL</code> — задать URL подписки
+<code>/start</code> — сбросить меню (если пропало)
+
+<b>Безопасность:</b>
+Бот работает через VPN, а при его отсутствии — напрямую.
+При переключении сервера — автооткат если Xray не запустился.
+При падении Xray — watchdog снимает iptables (интернет не пропадает).
 
 🔗 <a href=\"https://t.me/PrivateProxyKox\">t.me/PrivateProxyKox</a>"
 }
@@ -535,7 +781,7 @@ check_kox_update() {
   [ -z "$ADMIN_ID" ] && return 0
   upgrade_notify_allowed || return 0
 
-  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(tg_curl -fsSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && return 0
   printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}' || return 0
 
@@ -544,7 +790,7 @@ check_kox_update() {
   [ "$REM_INT" -le "$CUR_INT" ] 2>/dev/null && return 0
 
   # Fetch changelog for this version
-  CHANGELOG=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null | \
+  CHANGELOG=$(tg_curl -fsSL --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null | \
     awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" | \
     grep -v '^[[:space:]]*$' | head -6)
 
@@ -651,7 +897,7 @@ check_lists_update() {
   [ -z "$ADMIN_ID" ] && return 0
 
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(tg_curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && return 0
   printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]' || return 0
 
@@ -1080,8 +1326,16 @@ while true; do
     ARG=$(printf '%s' "$TEXT" | sed 's/^[^ ]* *//')
 
     case "$CMD" in
-      # Navigation
-      /start|/menu|menu)
+      # Navigation — /start always sends a FRESH message (clears stale sticky)
+      /start)
+        sticky_clear
+        update_menu "$CHAT_ID" \
+          "🔑 <b>KOX Shield — управление роутером</b>
+<i>v${KOX_VERSION}</i>
+
+Выберите действие:" "$(main_keyboard)"
+        ;;
+      /menu|menu)
         update_menu "$CHAT_ID" \
           "🔑 <b>KOX Shield — управление роутером</b>
 <i>v${KOX_VERSION}</i>
@@ -1090,10 +1344,12 @@ while true; do
         ;;
 
       # Info
-      status|/status)    h_status "$CHAT_ID" ;;
-      server|/server)    h_server "$CHAT_ID" ;;
-      stats|/stats)      h_stats  "$CHAT_ID" ;;
-      test_config)       h_test   "$CHAT_ID" ;;
+      status|/status)    h_status       "$CHAT_ID" ;;
+      server|/server)    h_servers_menu "$CHAT_ID" ;;
+      servers_menu)      h_servers_menu "$CHAT_ID" ;;
+      switch_list)       h_switch_list  "$CHAT_ID" ;;
+      stats|/stats)      h_stats        "$CHAT_ID" ;;
+      test_config)       h_test         "$CHAT_ID" ;;
 
       # VPN control
       do_on)             h_on      "$CHAT_ID" ;;
@@ -1201,6 +1457,25 @@ VPN прервётся примерно на 2 секунды." \
         else lists_enable_notify; fi
         h_settings "$CHAT_ID" ;;
 
+      # Server switching
+      switch_srv_*)
+        SRV_IDX=$(printf '%s' "$CMD" | sed 's/switch_srv_//')
+        h_do_switch "$CHAT_ID" "$SRV_IDX"
+        ;;
+
+      # Set subscription URL manually
+      /sub)
+        if [ -n "$ARG" ]; then
+          conf_set KOX_SUB_URL "$ARG"
+          update_menu "$CHAT_ID" "✅ <b>URL подписки сохранён:</b>
+<code>${ARG}</code>
+
+Теперь доступно переключение серверов." "$(main_keyboard)"
+        else
+          update_menu "$CHAT_ID" "Использование: <code>/sub https://...</code>" "$(back_keyboard)"
+        fi
+        ;;
+
       # Legacy cleanup
       clean_legacy)         h_clean_legacy "$CHAT_ID" ;;
       clean_legacy_confirm) h_clean_legacy_confirm "$CHAT_ID" ;;
@@ -1227,8 +1502,7 @@ VPN прервётся примерно на 2 секунды." \
       /listupdate|listupdate) h_lists_update "$CHAT_ID" ;;
 
       lists_do_update)
-        h_lists_update "$CHAT_ID"
-        lists_enable_notify ;;
+        h_lists_update "$CHAT_ID" ;;
       lists_apply_xray)
         send_typing "$CHAT_ID"
         /opt/bin/kox list-update >/dev/null 2>&1 &
@@ -1282,6 +1556,12 @@ Xray перезапустится через несколько секунд." ;
       do_clearlog)       h_clearlog "$CHAT_ID" ;;
 
       help|/help)        h_help     "$CHAT_ID" ;;
+
+      # Update now (direct command without waiting for notification)
+      /update)
+        sticky_clear
+        h_kox_do_upgrade "$CHAT_ID"
+        ;;
 
       # "Back to menu" from confirm/prompt screens
       menu)

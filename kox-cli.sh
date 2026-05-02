@@ -1298,6 +1298,26 @@ case "$CMD" in
   backup)        kox_backup ;;
   restore)       kox_restore "$@" ;;
   update-sub)    kox_update_sub ;;
+  sub)
+    # kox sub set <URL>  — save subscription URL to kox.conf
+    SUBCMD="${1:-}"; SUBURL="${2:-}"
+    case "$SUBCMD" in
+      set)
+        [ -z "$SUBURL" ] && fail "Использование: kox sub set <URL>" && exit 1
+        load_conf
+        if grep -q "^KOX_SUB_URL=" "$KOXCONF" 2>/dev/null; then
+          sed -i "s|^KOX_SUB_URL=.*|KOX_SUB_URL=\"${SUBURL}\"|" "$KOXCONF"
+        else
+          printf 'KOX_SUB_URL="%s"\n' "$SUBURL" >> "$KOXCONF"
+        fi
+        ok "URL подписки сохранён: ${W}${SUBURL}${N}"
+        info "Теперь доступна: kox update-sub" ;;
+      get)
+        load_conf; info "KOX_SUB_URL=${W}${KOX_SUB_URL:-не задан}${N}" ;;
+      *)
+        fail "Использование: kox sub set <URL> | kox sub get" ;;
+    esac
+    ;;
   cron-on)       kox_cron_enable ;;
   cron-off)      kox_cron_disable ;;
   list-cats)     kox_list_cats ;;
