@@ -318,7 +318,8 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
 
   local SERVERS
-  SERVERS=$(printf '%s' "$DECODED" | grep -o 'vless://[^ \t\r\n]*')
+  # Each line in the decoded subscription is a full vless:// URL
+  SERVERS=$(printf '%s' "$DECODED" | grep 'vless://')
   if [ -z "$SERVERS" ]; then
     update_menu "$CHAT" "❌ Серверы не найдены в подписке." "$(back_keyboard)"
     return
@@ -343,7 +344,8 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
     local PING_MS
     PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
     [ -z "$PING_MS" ] && PING_MS="—"
-    printf '%s\n' "${IDX}|${HOST}|${PORT}|${REMARK}|${PING_MS}|${VLINE}" >> /tmp/kox-servers.txt
+    # Use TAB as delimiter (server names can contain '|' e.g. "Germany | Klever")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${IDX}" "${HOST}" "${PORT}" "${REMARK}" "${PING_MS}" "${VLINE}" >> /tmp/kox-servers.txt
     IDX=$((IDX+1))
   done
 
@@ -354,9 +356,9 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
     return
   fi
 
-  # Build keyboard + info text
+  # Build keyboard + info text (TAB-separated file)
   local ROWS="" INFO_TEXT=""
-  while IFS='|' read -r IDX HOST PORT REMARK PING_MS VLINE; do
+  while IFS='	' read -r IDX HOST PORT REMARK PING_MS VLINE; do
     [ -z "$HOST" ] && continue
     local MARK="" PING_ICON=""
     [ "$HOST" = "$CURRENT_SRV" ] && MARK="✅ "
@@ -398,19 +400,19 @@ h_do_switch() {
     return
   fi
 
-  # Format: IDX|HOST|PORT|REMARK|PING|VLESS_URL
+  # Format: IDX<TAB>HOST<TAB>PORT<TAB>REMARK<TAB>PING<TAB>VLESS_URL
   local SRV_LINE
-  SRV_LINE=$(grep "^${IDX}|" /tmp/kox-servers.txt | head -1)
+  SRV_LINE=$(grep "^${IDX}	" /tmp/kox-servers.txt | head -1)
   if [ -z "$SRV_LINE" ]; then
     update_menu "$CHAT" "❌ Сервер #${IDX} не найден. Нажмите «Сменить сервер» снова." "$(back_keyboard)"
     return
   fi
 
   local VLESS_URL HOST PORT REMARK
-  HOST=$(printf '%s' "$SRV_LINE" | cut -d'|' -f2)
-  PORT=$(printf '%s' "$SRV_LINE" | cut -d'|' -f3)
-  REMARK=$(printf '%s' "$SRV_LINE" | cut -d'|' -f4)
-  VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -d'|' -f6-)
+  HOST=$(printf '%s' "$SRV_LINE"   | cut -f2)
+  PORT=$(printf '%s' "$SRV_LINE"   | cut -f3)
+  REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
+  VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
   # Parse VLESS URL for config fields
   local UUID PARAMS SNI FLOW
