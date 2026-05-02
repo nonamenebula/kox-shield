@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.8"
+KOX_VERSION="2026.05.02.9"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -500,9 +500,12 @@ h_do_switch() {
     /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
   fi
 
-  # Poll for xray to come up (up to 15 seconds).
-  # NOTE: BusyBox `nc` on Keenetic does NOT support `-z`, so we check via
-  # `netstat -ln | grep 10808` instead.
+  # Stage 1: wait for xray process + port 10808 to listen (up to 15 sec).
+  # NOTE: BusyBox `nc` on Keenetic does NOT support `-z`, so we use netstat.
+  update_menu "$CHAT" "⏳ <b>Запускаю Xray...</b>
+
+<b>${REMARK}</b>
+<code>${HOST}:${PORT:-443}</code>"
   XRAY_UP=0
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
@@ -512,7 +515,33 @@ h_do_switch() {
     sleep 1
   done
 
+  # Stage 2: end-to-end VPN test — actually try to reach Telegram API
+  # through the SOCKS proxy that xray exposes. If Reality handshake or
+  # any upstream issue breaks the tunnel, this will fail and we roll back.
+  TUNNEL_OK=0
   if [ "$XRAY_UP" = "1" ]; then
+    update_menu "$CHAT" "⏳ <b>Проверяю VPN-туннель к серверу...</b>
+
+<b>${REMARK}</b>
+<code>${HOST}:${PORT:-443}</code>
+
+Тестирую соединение через Xray..."
+    # Try up to 6 times (2s each = 12s budget). Hitting Telegram API directly
+    # exercises the same path the bot itself needs.
+    for i in 1 2 3 4 5 6; do
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -x socks5h://127.0.0.1:10809 --max-time 5 \
+        "https://api.telegram.org" 2>/dev/null)
+      # Any 1xx/2xx/3xx/4xx/5xx == we got an HTTP response, tunnel works.
+      # 000 == connection failed (tunnel dead).
+      case "$HTTP_CODE" in
+        000|"") sleep 2 ;;
+        *)      TUNNEL_OK=1; break ;;
+      esac
+    done
+  fi
+
+  if [ "$TUNNEL_OK" = "1" ]; then
     update_menu "$CHAT" "✅ <b>Переключено на сервер!</b>
 
 <b>${REMARK}</b>
@@ -521,10 +550,18 @@ h_do_switch() {
 UUID:  <code>${UUID}</code>
 SNI:   <code>${SNI:-www.google.com}</code>
 
-Xray запущен, порт 10808 активен." \
+✓ Xray запущен
+✓ VPN-туннель проверен (HTTP ${HTTP_CODE})" \
       "$(main_keyboard)"
   else
-    # Auto-revert
+    # Auto-revert: VPN test failed, restore the previous working config
+    local FAIL_REASON
+    if [ "$XRAY_UP" = "0" ]; then
+      FAIL_REASON="Xray не запустился (порт 10808 не слушает)"
+    else
+      FAIL_REASON="VPN-туннель не работает (нет ответа от Telegram API через Xray)"
+    fi
+
     cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
     cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
     killall xray 2>/dev/null; sleep 2
@@ -533,17 +570,32 @@ Xray запущен, порт 10808 активен." \
     else
       /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
     fi
-    # Wait for rollback xray to come up too
+    # Wait for rollback xray to come up
     for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
       pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && break
       sleep 1
     done
-    update_menu "$CHAT" "❌ <b>Переключение не удалось — откат!</b>
+    # Verify rollback tunnel actually works too (informational)
+    ROLLBACK_OK="?"
+    for i in 1 2 3 4; do
+      RC=$(curl -s -o /dev/null -w "%{http_code}" \
+        -x socks5h://127.0.0.1:10809 --max-time 5 \
+        "https://api.telegram.org" 2>/dev/null)
+      case "$RC" in
+        000|"") sleep 2 ;;
+        *)      ROLLBACK_OK="✓ туннель работает (HTTP $RC)"; break ;;
+      esac
+    done
+    [ "$ROLLBACK_OK" = "?" ] && ROLLBACK_OK="⚠ туннель не отвечает — проверьте VPN"
 
-Xray не запустился с новым сервером.
+    update_menu "$CHAT" "❌ <b>Переключение отменено — откат!</b>
+
+<b>Причина:</b> ${FAIL_REASON}
+
 Восстановлен предыдущий конфиг.
+${ROLLBACK_OK}
 
-Попробуйте другой сервер или проверьте логи." \
+Попробуйте другой сервер из списка." \
       "$(main_keyboard)"
   fi
 }
