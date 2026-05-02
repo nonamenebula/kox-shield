@@ -155,7 +155,7 @@ install_packages() {
   info "Обновляю список пакетов..."
   opkg update >/dev/null 2>&1 || warn "opkg update завершился с ошибкой"
 
-  for PKG in xray-core curl jq cron; do
+  for PKG in xray-core curl jq cron iptables; do
     if opkg list-installed 2>/dev/null | grep -q "^${PKG} "; then
       ok "${PKG} уже установлен"
     else
@@ -334,15 +334,14 @@ for CIDR in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
   $IPTS -t nat -A XRAY_REDIRECT -d "$CIDR" -j RETURN 2>/dev/null || true
 done
 
-# Перенаправить TCP и UDP/443 в Xray
-$IPTS -t nat -A XRAY_REDIRECT -p tcp -j REDIRECT --to-ports 10808 2>/dev/null || true
-$IPTS -t nat -A XRAY_REDIRECT -p udp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
+# Перенаправить только HTTP/HTTPS — только эти порты используют VPN
+# Остальной трафик (игры, торренты, и т.д.) идёт напрямую
+$IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
+$IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
 
 # Применить к трафику LAN
 $IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-$IPTS -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
 $IPTS -t nat -A PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-$IPTS -t nat -A PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
 NATSCRIPT
 
   chmod +x "${NAT_DIR}/99-kox-nat.sh"
