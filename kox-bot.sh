@@ -415,11 +415,14 @@ h_do_switch() {
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
   # Parse VLESS URL for config fields
-  local UUID PARAMS SNI FLOW
+  local UUID PARAMS SNI FLOW PBKEY SID FP
   UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
-  PARAMS=$(printf '%s' "$VLESS_URL" | grep -o '?[^#]*' | sed 's/^?//')
-  SNI=$(printf '%s' "$PARAMS" | grep -o 'sni=[^&]*' | cut -d= -f2)
+  PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
+  SNI=$(printf '%s' "$PARAMS"  | grep -o 'sni=[^&]*'  | cut -d= -f2)
   FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+  PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbkey=[^&]*'| cut -d= -f2)
+  SID=$(printf '%s' "$PARAMS"  | grep -o 'sid=[^&]*'  | cut -d= -f2)
+  FP=$(printf '%s' "$PARAMS"   | grep -o 'fp=[^&]*'   | cut -d= -f2)
 
   if [ -z "$UUID" ] || [ -z "$HOST" ]; then
     update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
@@ -445,19 +448,26 @@ h_do_switch() {
   conf_set KOX_SNI "${SNI:-www.google.com}"
   conf_set KOX_FLOW "${FLOW:-xtls-rprx-vision}"
 
-  # Update config.json via jq (properly preserves inbound ports)
+  # Update config.json via jq (preserves inbounds; updates all Reality fields)
   local TMP_CONF=/tmp/kox-switch-tmp.json
   local P="${PORT:-443}"
   jq --arg addr "$HOST" --argjson port "$P" \
-     --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
-     --arg flow "${FLOW:-xtls-rprx-vision}" '
+     --arg uuid "$UUID" \
+     --arg sni  "${SNI:-www.google.com}" \
+     --arg flow "${FLOW:-xtls-rprx-vision}" \
+     --arg pbkey "${PBKEY}" \
+     --arg sid  "${SID}" \
+     --arg fp   "${FP:-chrome}" '
     .outbounds = [.outbounds[] |
       if .protocol == "vless" then
         .settings.vnext[0].address = $addr |
         .settings.vnext[0].port = ($port | tonumber) |
         .settings.vnext[0].users[0].id = $uuid |
         .settings.vnext[0].users[0].flow = $flow |
-        (if $sni != "" then .streamSettings.realitySettings.serverName = $sni else . end)
+        .streamSettings.realitySettings.serverName = $sni |
+        (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
+        (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
+        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end)
       else . end
     ]
   ' "$CONF" > "$TMP_CONF" 2>/dev/null
