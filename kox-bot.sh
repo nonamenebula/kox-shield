@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.10"
+KOX_VERSION="2026.05.02.11"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -429,15 +429,21 @@ h_do_switch() {
   fi
 
   # Parse VLESS URL for config fields
-  local UUID PARAMS SNI FLOW PBKEY SID FP
+  local UUID PARAMS SNI FLOW PBKEY SID FP SPX
   UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
   PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
   SNI=$(printf '%s' "$PARAMS"  | grep -o 'sni=[^&]*'  | cut -d= -f2)
+  # IMPORTANT: flow may be ABSENT (server doesn't use Vision wrapper).
+  # We must NOT default to xtls-rprx-vision — that would break servers
+  # that have a plain VLESS user. Empty string == no flow.
   FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
   # 3x-ui uses 'pbk=' (not 'pbkey=') for the Reality public key
   PBKEY=$(printf '%s' "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
   SID=$(printf '%s' "$PARAMS"   | grep -o 'sid=[^&]*'  | cut -d= -f2)
   FP=$(printf '%s' "$PARAMS"    | grep -o 'fp=[^&]*'   | cut -d= -f2)
+  # spiderX is per-server; URL-decode the leading %2F → /
+  SPX=$(printf '%s' "$PARAMS"   | grep -o 'spx=[^&]*'  | cut -d= -f2)
+  SPX=$(urldecode "${SPX:-/}")
 
   if [ -z "$UUID" ] || [ -z "$HOST" ]; then
     update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
@@ -497,23 +503,27 @@ h_do_switch() {
   cp "$CONF" /tmp/kox-config-backup.json 2>/dev/null
   cp "$KOXCONF" /tmp/kox-conf-backup 2>/dev/null
 
-  # Update kox.conf
+  # Update kox.conf — note: FLOW may be EMPTY (don't default it!)
   conf_set KOX_SERVER "$HOST"
   conf_set KOX_PORT "${PORT:-443}"
   conf_set KOX_UUID "$UUID"
   conf_set KOX_SNI "${SNI:-www.google.com}"
-  conf_set KOX_FLOW "${FLOW:-xtls-rprx-vision}"
+  conf_set KOX_FLOW "$FLOW"
 
-  # Update config.json via jq (preserves inbounds; updates all Reality fields)
+  # Update config.json via jq (preserves inbounds; updates all Reality fields).
+  # CRITICAL: $flow is set to whatever the URL says — empty string if missing.
+  # For Reality servers without Vision flow, the server's user config has no
+  # flow and our outbound MUST also have no flow (or empty), or handshake fails.
   local TMP_CONF=/tmp/kox-switch-tmp.json
   local P="${PORT:-443}"
   jq --arg addr "$HOST" --argjson port "$P" \
      --arg uuid "$UUID" \
      --arg sni  "${SNI:-www.google.com}" \
-     --arg flow "${FLOW:-xtls-rprx-vision}" \
+     --arg flow "$FLOW" \
      --arg pbkey "${PBKEY}" \
      --arg sid  "${SID}" \
-     --arg fp   "${FP:-chrome}" '
+     --arg fp   "${FP:-chrome}" \
+     --arg spx  "${SPX:-/}" '
     .outbounds = [.outbounds[] |
       if .protocol == "vless" then
         .settings.vnext[0].address = $addr |
@@ -523,7 +533,8 @@ h_do_switch() {
         .streamSettings.realitySettings.serverName = $sni |
         (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
         (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
-        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end)
+        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
+        .streamSettings.realitySettings.spiderX = $spx
       else . end
     ]
   ' "$CONF" > "$TMP_CONF" 2>/dev/null
@@ -588,6 +599,7 @@ h_do_switch() {
 Порт:  <code>${PORT:-443}</code>
 UUID:  <code>${UUID}</code>
 SNI:   <code>${SNI:-www.google.com}</code>
+Flow:  <code>${FLOW:-—}</code>
 
 ✓ Сервер доступен
 ✓ Xray запущен
