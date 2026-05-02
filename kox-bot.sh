@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.02.13"
+KOX_VERSION="2026.05.02.14"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -1278,13 +1278,11 @@ h_settings() {
   MSG="⚙️ <b>Настройки KOX Shield</b>
 
 🔄 <b>Автообновление KOX</b>: ${ICON_UPG}
-Когда выходит новая версия KOX Shield — устанавливать автоматически.
-
 📋 <b>Автообновление списков</b>: ${ICON_LST}
-Автоматически скачивать новые домены при обнаружении обновлений.
+${ICON_NUPG} <b>Уведомления KOX</b> / ${ICON_NLST} <b>Уведомления списков</b>
 
-${ICON_NUPG} <b>Уведомления: KOX</b>: ${NTFY_UPG}
-${ICON_NLST} <b>Уведомления: Списки</b>: ${NTFY_LST}"
+🛡 <b>Настройки VPN-failover</b> →
+Выбор основного сервера, задержка, автовозврат"
 
   KBD=$(jq -cn \
     --arg iu "$ICON_UPG" --arg il "$ICON_LST" \
@@ -1294,10 +1292,169 @@ ${ICON_NLST} <b>Уведомления: Списки</b>: ${NTFY_LST}"
       [{"text":("📋 Автообн. списков: "+$il),"callback_data":"toggle_auto_lst"}],
       [{"text":($inu+" уведомл. KOX"),"callback_data":"toggle_notify_upg"},
        {"text":($inl+" уведомл. списков"),"callback_data":"toggle_notify_lst"}],
+      [{"text":"🛡 Настройки VPN-failover →","callback_data":"failover_settings"}],
       [{"text":"◀️ Главное меню","callback_data":"menu"}]
     ]}')
 
   update_menu "$CHAT" "$MSG" "$KBD"
+}
+
+# ── VPN Failover Settings ──────────────────────────────────────────────
+h_failover_settings() {
+  local CHAT="$1"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+
+  local PREF_REMARK="${KOX_PREFERRED_REMARK:-не задан}"
+  local PREF_HOST="${KOX_PREFERRED_HOST:-}"
+  local FMIN="${KOX_FAILOVER_MINUTES:-10}"
+  local AUTORET="${KOX_AUTO_RETURN:-yes}"
+  [ "$AUTORET" = "yes" ] && ICON_RET="✅ Вкл" || ICON_RET="❌ Выкл"
+
+  # Check if currently on backup (different from preferred)
+  local CURRENT_HOST
+  CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  local STATUS_LINE=""
+  if [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$PREF_HOST" ]; then
+    STATUS_LINE="
+⚠️ <b>Сейчас на резервном сервере</b>: <code>${CURRENT_HOST}</code>"
+  fi
+
+  MSG="🛡 <b>Настройки VPN-Failover</b>${STATUS_LINE}
+
+⭐ <b>Основной сервер</b>: ${PREF_REMARK}
+$([ -n "$PREF_HOST" ] && printf '<code>%s</code>' "$PREF_HOST")
+
+⏱ <b>Задержка переключения</b>: <b>${FMIN} мин</b>
+Через сколько минут без VPN переключиться на резервный.
+
+🔄 <b>Автовозврат на основной</b>: ${ICON_RET}
+Когда основной сервер восстановится — вернуться на него."
+
+  KBD=$(jq -cn \
+    --arg ir "$ICON_RET" --arg fm "$FMIN" \
+    '{"inline_keyboard":[
+      [{"text":"⭐ Выбрать основной сервер","callback_data":"pref_pick_list"}],
+      [{"text":"⏱ Задержка: "+$fm+" мин →","callback_data":"failover_time_menu"}],
+      [{"text":("🔄 Автовозврат: "+$ir),"callback_data":"toggle_auto_return"}],
+      [{"text":"◀️ Назад","callback_data":"settings"}]
+    ]}')
+
+  update_menu "$CHAT" "$MSG" "$KBD"
+}
+
+h_pref_pick_list() {
+  local CHAT="$1"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  local SUB_URL="${KOX_SUB_URL:-}"
+  [ -z "$SUB_URL" ] && {
+    update_menu "$CHAT" "❌ URL подписки не задан. Используйте /sub URL" "$(back_keyboard)"
+    return
+  }
+  update_menu "$CHAT" "⏳ <b>Загружаю список серверов...</b>"
+
+  local RAW DECODED
+  RAW=$(tg_curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
+  [ -z "$RAW" ] && { update_menu "$CHAT" "❌ Не удалось получить подписку" "$(back_keyboard)"; return; }
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+
+  local PREF_HOST="${KOX_PREFERRED_HOST:-}"
+  printf '' > /tmp/kox-pref-servers.txt
+  local IDX=0
+  printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
+    local HOST PORT ENC_REMARK
+    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
+    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    ENC_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
+    printf '%s\t%s\t%s\t%s\n' "$IDX" "$HOST" "$PORT" "$ENC_REMARK" >> /tmp/kox-pref-servers.txt
+    IDX=$((IDX+1))
+  done
+
+  [ ! -s /tmp/kox-pref-servers.txt ] && { update_menu "$CHAT" "❌ Серверы не найдены" "$(back_keyboard)"; return; }
+
+  local ROWS=""
+  while IFS='	' read -r IDX HOST PORT ENC_REMARK; do
+    local REMARK MARK
+    REMARK=$(urldecode "$ENC_REMARK")
+    [ -z "$REMARK" ] && REMARK="$HOST"
+    [ "$HOST" = "$PREF_HOST" ] && MARK="⭐ " || MARK=""
+    ROWS="${ROWS},[{\"text\":\"${MARK}${REMARK}\",\"callback_data\":\"set_pref_${IDX}\"}]"
+  done < /tmp/kox-pref-servers.txt
+
+  KBD="{\"inline_keyboard\":[${ROWS#,},[{\"text\":\"◀️ Назад\",\"callback_data\":\"failover_settings\"}]]}"
+  update_menu "$CHAT" "⭐ <b>Выберите основной сервер</b>
+
+Это сервер на который бот будет пытаться вернуться автоматически, если был переключён на резервный." "$KBD"
+}
+
+h_set_preferred() {
+  local CHAT="$1" IDX="$2"
+  [ ! -f /tmp/kox-pref-servers.txt ] && { h_pref_pick_list "$CHAT"; return; }
+  local SRV_LINE
+  SRV_LINE=$(grep "^${IDX}	" /tmp/kox-pref-servers.txt | head -1)
+  [ -z "$SRV_LINE" ] && { update_menu "$CHAT" "❌ Сервер не найден" "$(back_keyboard)"; return; }
+  local HOST ENC_REMARK REMARK
+  HOST=$(printf '%s' "$SRV_LINE" | cut -f2)
+  ENC_REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
+  REMARK=$(urldecode "$ENC_REMARK")
+  [ -z "$REMARK" ] && REMARK="$HOST"
+
+  conf_set KOX_PREFERRED_HOST   "$HOST"
+  conf_set KOX_PREFERRED_REMARK "$REMARK"
+  rm -f /tmp/kox-pref-servers.txt
+
+  update_menu "$CHAT" "⭐ <b>Основной сервер установлен!</b>
+
+<b>${REMARK}</b>
+<code>${HOST}</code>
+
+Бот будет возвращаться на этот сервер автоматически при восстановлении связи." \
+    "$(printf '{"inline_keyboard":[[{"text":"◀️ Настройки failover","callback_data":"failover_settings"}]]}')"
+}
+
+h_failover_time_menu() {
+  local CHAT="$1"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  local CUR="${KOX_FAILOVER_MINUTES:-10}"
+  KBD=$(jq -cn --arg c "$CUR" '{"inline_keyboard":[
+    [{"text":"1 мин","callback_data":"set_ft_1"},
+     {"text":"2 мин","callback_data":"set_ft_2"},
+     {"text":"3 мин","callback_data":"set_ft_3"}],
+    [{"text":"5 мин","callback_data":"set_ft_5"},
+     {"text":"10 мин","callback_data":"set_ft_10"},
+     {"text":"15 мин","callback_data":"set_ft_15"}],
+    [{"text":"20 мин","callback_data":"set_ft_20"},
+     {"text":"30 мин","callback_data":"set_ft_30"},
+     {"text":"60 мин","callback_data":"set_ft_60"}],
+    [{"text":"◀️ Назад","callback_data":"failover_settings"}]
+  ]}')
+  update_menu "$CHAT" "⏱ <b>Задержка переключения на резервный сервер</b>
+
+Текущее значение: <b>${CUR} мин</b>
+
+Через сколько минут без VPN-туннеля автоматически переключиться на другой сервер?
+
+<i>Рекомендуем 5–10 мин. При 1–2 мин возможны ложные срабатывания.</i>" "$KBD"
+}
+
+h_set_failover_time() {
+  local CHAT="$1" MINS="$2"
+  conf_set KOX_FAILOVER_MINUTES "$MINS"
+  answer_cb "$CB_ID" "Задержка: ${MINS} мин ✅"
+  h_failover_settings "$CHAT"
+}
+
+h_toggle_auto_return() {
+  local CHAT="$1"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  local CUR="${KOX_AUTO_RETURN:-yes}"
+  if [ "$CUR" = "yes" ]; then
+    conf_set KOX_AUTO_RETURN "no"
+    answer_cb "$CB_ID" "Автовозврат выключен"
+  else
+    conf_set KOX_AUTO_RETURN "yes"
+    answer_cb "$CB_ID" "Автовозврат включён ✅"
+  fi
+  h_failover_settings "$CHAT"
 }
 
 h_clean_legacy() {
@@ -1611,7 +1768,17 @@ VPN прервётся примерно на 2 секунды." \
         update_menu "$CHAT_ID" "🛠 <b>Инструменты</b>" "$(tools_keyboard)" ;;
 
       # Settings screen
-      /settings|settings) h_settings "$CHAT_ID" ;;
+      /settings|settings)    h_settings          "$CHAT_ID" ;;
+      failover_settings)     h_failover_settings "$CHAT_ID" ;;
+      pref_pick_list)        h_pref_pick_list    "$CHAT_ID" ;;
+      failover_time_menu)    h_failover_time_menu "$CHAT_ID" ;;
+      toggle_auto_return)    h_toggle_auto_return "$CHAT_ID" ;;
+      set_pref_*)
+        PREF_IDX=$(printf '%s' "$CMD" | sed 's/set_pref_//')
+        h_set_preferred "$CHAT_ID" "$PREF_IDX" ;;
+      set_ft_*)
+        FT_MINS=$(printf '%s' "$CMD" | sed 's/set_ft_//')
+        h_set_failover_time "$CHAT_ID" "$FT_MINS" ;;
 
       toggle_auto_upg)
         [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
