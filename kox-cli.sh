@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.02.3"
+KOX_VERSION="2026.05.02.4"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
