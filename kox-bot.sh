@@ -376,7 +376,12 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
         ;;
     esac
     local BTN_LABEL="${MARK}${REMARK}  ${PING_ICON} ${PING_MS} ms"
-    ROWS="${ROWS},[{\"text\":\"${BTN_LABEL}\",\"callback_data\":\"switch_srv_${IDX}\"}]"
+    if [ "$HOST" = "$CURRENT_SRV" ]; then
+      # Current server — tapping it does nothing (noop callback)
+      ROWS="${ROWS},[{\"text\":\"${BTN_LABEL}\",\"callback_data\":\"srv_already_active\"}]"
+    else
+      ROWS="${ROWS},[{\"text\":\"${BTN_LABEL}\",\"callback_data\":\"switch_srv_${IDX}\"}]"
+    fi
     INFO_TEXT="${INFO_TEXT}${MARK}${PING_ICON} <b>${REMARK}</b> — <code>${HOST}:${PORT}</code> — <code>${PING_MS} ms</code>
 "
   done < /tmp/kox-servers.txt
@@ -413,6 +418,15 @@ h_do_switch() {
   PORT=$(printf '%s' "$SRV_LINE"   | cut -f3)
   REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
+
+  # Check if already connected to this server
+  local CURRENT_SRV
+  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  if [ "$HOST" = "$CURRENT_SRV" ]; then
+    [ -n "$CB_ID" ] && api_call "answerCallbackQuery" \
+      "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"✅ Уже подключено к этому серверу\"}" >/dev/null 2>&1
+    return
+  fi
 
   # Parse VLESS URL for config fields
   local UUID PARAMS SNI FLOW PBKEY SID FP
@@ -1487,6 +1501,10 @@ VPN прервётся примерно на 2 секунды." \
         h_settings "$CHAT_ID" ;;
 
       # Server switching
+      srv_already_active)
+        [ -n "$CB_ID" ] && api_call "answerCallbackQuery" \
+          "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"✅ Уже подключено к этому серверу\"}" >/dev/null 2>&1
+        ;;
       switch_srv_*)
         SRV_IDX=$(printf '%s' "$CMD" | sed 's/switch_srv_//')
         h_do_switch "$CHAT_ID" "$SRV_IDX"
