@@ -58,10 +58,14 @@ check_entware() {
 }
 
 check_internet() {
-  if ! wget -q --spider https://github.com 2>/dev/null; then
+  # BusyBox wget не поддерживает HTTPS — используем curl
+  if curl -fsSL --max-time 10 --silent https://github.com -o /dev/null 2>/dev/null; then
+    ok "Интернет доступен"
+  elif ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
+    ok "Интернет доступен (ping)"
+  else
     fail "Нет доступа к интернету с роутера"
   fi
-  ok "Интернет доступен"
 }
 
 # ── Парсинг VLESS URL ──────────────────────────────────────────────────────────
@@ -93,7 +97,7 @@ url_decode() {
 parse_subscription() {
   SUB_URL="$1"
   info "Загружаю подписку: $SUB_URL"
-  RAW=$(wget -qO- "$SUB_URL" 2>/dev/null | base64 -d 2>/dev/null || wget -qO- "$SUB_URL" 2>/dev/null)
+  RAW=$(curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null | base64 -d 2>/dev/null || curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
   [ -z "$RAW" ] && fail "Не удалось загрузить подписку"
 
   COUNT=$(printf '%s' "$RAW" | grep -c '^vless://' || echo 0)
@@ -330,6 +334,58 @@ NATSCRIPT
   sh "${NAT_DIR}/99-kox-nat.sh" 2>/dev/null || true
   ok "iptables правила настроены"
 
+  # Watchdog: если Xray упал — снимаем iptables чтобы интернет продолжал работать напрямую
+  cat > /opt/etc/kox-watchdog.sh << 'WATCHDOG'
+#!/bin/sh
+# KOX Watchdog — авто-fallback если Xray не работает
+XRAY_INIT="/opt/etc/init.d/S24xray"
+NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+LOGF="/opt/var/log/kox-watchdog.log"
+TS=$(date '+%H:%M:%S')
+
+if pgrep xray >/dev/null 2>&1; then
+  # Xray работает — убедиться что iptables правила есть (восстановить если пропали)
+  if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
+    if [ ! -f /tmp/kox-vpn-off ]; then
+      [ -x "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null
+      echo "$TS iptables восстановлен" >> "$LOGF"
+    fi
+  fi
+else
+  # Xray не работает — снять iptables чтобы интернет шёл напрямую
+  iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+  iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  echo "$TS Xray упал — iptables снят, интернет работает напрямую" >> "$LOGF"
+  # Попытка перезапуска
+  if [ -x "$XRAY_INIT" ]; then
+    "$XRAY_INIT" start 2>/dev/null
+    sleep 3
+    if pgrep xray >/dev/null 2>&1; then
+      [ -x "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null
+      echo "$TS Xray перезапущен, iptables восстановлен" >> "$LOGF"
+    else
+      echo "$TS Xray не удалось перезапустить — трафик идёт напрямую" >> "$LOGF"
+    fi
+  fi
+  # Ротация лога
+  [ $(wc -l < "$LOGF" 2>/dev/null || echo 0) -gt 200 ] && tail -100 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
+fi
+WATCHDOG
+
+  chmod +x /opt/etc/kox-watchdog.sh
+
+  # Добавить watchdog в cron (каждую минуту)
+  CRON_LINE="* * * * * /opt/etc/kox-watchdog.sh"
+  if ! crontab -l 2>/dev/null | grep -q kox-watchdog; then
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    ok "Watchdog добавлен в cron (каждую минуту)"
+  else
+    ok "Watchdog уже в cron"
+  fi
+
   # Символические ссылки для geo-данных
   if [ ! -f "/opt/usr/share/xray/geoip.dat" ] && [ -f "/opt/usr/share/xray-core/geoip.dat" ]; then
     mkdir -p /opt/usr/share/xray
@@ -341,16 +397,16 @@ NATSCRIPT
 # ── Загрузка kox CLI и бота с GitHub ─────────────────────────────────────────
 download_scripts() {
   info "Загружаю kox CLI с GitHub..."
-  wget -qO "${BIN}/kox" "${GITHUB_RAW}/kox-cli.sh" && chmod +x "${BIN}/kox" || \
+  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-cli.sh" -o "${BIN}/kox" && chmod +x "${BIN}/kox" || \
     fail "Не удалось загрузить kox CLI"
   ok "kox → /opt/bin/kox"
 
   info "Загружаю kox-bot с GitHub..."
-  wget -qO "${BIN}/kox-bot" "${GITHUB_RAW}/kox-bot.sh" && chmod +x "${BIN}/kox-bot" || \
+  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-bot.sh" -o "${BIN}/kox-bot" && chmod +x "${BIN}/kox-bot" || \
     warn "Не удалось загрузить kox-bot (опционально)"
 
   info "Загружаю init.d сервис..."
-  wget -qO "${INIT}/S90kox-bot" "${GITHUB_RAW}/S90kox-bot" && chmod +x "${INIT}/S90kox-bot" || \
+  curl -fsSL --max-time 30 "${GITHUB_RAW}/S90kox-bot" -o "${INIT}/S90kox-bot" && chmod +x "${INIT}/S90kox-bot" || \
     warn "Не удалось загрузить S90kox-bot (опционально)"
 }
 
