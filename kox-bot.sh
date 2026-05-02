@@ -282,99 +282,111 @@ SNI:   <code>${SNI:-}</code>
 Подписка: <code>${SUB_URL:-не задана}</code>" "$KBD"
 }
 
-# Fetch subscription, parse server list, show switch keyboard
+# URL-decode %XX encoded string (handles UTF-8 / emoji, no python3 needed)
+urldecode() {
+  printf "%b" "$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\x/g')"
+}
+
+# Fetch subscription, show servers with names + ping
 h_switch_list() {
   local CHAT="$1"
-  send_typing "$CHAT"
   [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
   local SUB_URL="${KOX_SUB_URL:-}"
 
   if [ -z "$SUB_URL" ]; then
     update_menu "$CHAT" "❌ <b>URL подписки не задан</b>
 
-Задайте его на роутере:
-<code>kox sub set https://kox.nonamenebula.ru/c/TOKEN</code>
-
-Или введите команду: <code>/sub URL</code>" "$(back_keyboard)"
+Задайте его через команду:
+<code>/sub https://kox.nonamenebula.ru/c/TOKEN</code>" "$(back_keyboard)"
     return
   fi
 
-  local RAW
+  # Show loading message immediately
+  update_menu "$CHAT" "⏳ <b>Загружаю список серверов...</b>
+
+Измеряю пинг до каждого сервера, подождите ~5 сек."
+
+  local RAW DECODED
   RAW=$(tg_curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
   if [ -z "$RAW" ]; then
     update_menu "$CHAT" "❌ Не удалось получить подписку
 
-URL: <code>${SUB_URL}</code>
-Проверьте VPN и URL подписки." "$(back_keyboard)"
-    return
-  fi
-
-  # Decode base64 (BusyBox base64 -d)
-  local DECODED
-  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-
-  # Extract vless:// lines
-  local SERVERS
-  SERVERS=$(printf '%s' "$DECODED" | grep -o 'vless://[^[:space:]]*' | head -10)
-  if [ -z "$SERVERS" ]; then
-    update_menu "$CHAT" "❌ Серверы не найдены в подписке.
-
-Возможно, подписка вернула HTML или некорректный формат.
 URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
     return
   fi
 
-  # Build keyboard with server list
-  local BUTTONS='[{"text":"◀️ Назад","callback_data":"servers_menu"}]'
-  local I=0
+  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+
+  local SERVERS
+  SERVERS=$(printf '%s' "$DECODED" | grep -o 'vless://[^ \t\r\n]*')
+  if [ -z "$SERVERS" ]; then
+    update_menu "$CHAT" "❌ Серверы не найдены в подписке." "$(back_keyboard)"
+    return
+  fi
+
   local CURRENT_SRV
   CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
 
-  # Save server list to tmp file for callback lookup
+  # Build server list with ping — save to file for callback use
   printf '' > /tmp/kox-servers.txt
-  printf '%s\n' "$SERVERS" | while IFS= read -r VLESS_URL; do
-    [ -z "$VLESS_URL" ] && continue
-    local HOSTPORT REMARK HOST
-    HOSTPORT=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^?]*\).*|\1|')
-    HOST=$(printf '%s' "$HOSTPORT" | cut -d: -f1)
-    REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
-      python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || \
-      printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//')
+  local IDX=0
+  printf '%s\n' "$SERVERS" | while IFS= read -r VLINE; do
+    [ -z "$VLINE" ] && continue
+    local HOST PORT REMARK ENCODED_REMARK
+    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
+    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    # Extract remark: everything after last '#' (avoid BusyBox grep \t\r\n issues)
+    ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
+    REMARK=$(urldecode "$ENCODED_REMARK")
     [ -z "$REMARK" ] && REMARK="$HOST"
-    local IDX=$((I))
-    printf '%s|%s\n' "$IDX" "$VLESS_URL" >> /tmp/kox-servers.txt
-    local MARK=""
-    [ "$HOST" = "$CURRENT_SRV" ] && MARK=" ✅"
-    I=$((I+1))
+    # Measure ping (1 packet, 2s timeout)
+    local PING_MS
+    PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
+    [ -z "$PING_MS" ] && PING_MS="—"
+    printf '%s\n' "${IDX}|${HOST}|${PORT}|${REMARK}|${PING_MS}|${VLINE}" >> /tmp/kox-servers.txt
+    IDX=$((IDX+1))
   done
 
-  # Build inline keyboard from saved list
-  local ROWS=""
-  local N=0
-  while IFS='|' read -r IDX VLESS_URL; do
-    [ -z "$VLESS_URL" ] && continue
-    local HOST REMARK
-    HOST=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^:?]*\).*|\1|')
-    REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
-      python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || echo "$HOST")
-    [ -z "$REMARK" ] && REMARK="$HOST"
-    local MARK=""
-    [ "$HOST" = "$CURRENT_SRV" ] && MARK=" ✅"
-    ROWS="${ROWS},[{\"text\":\"${MARK}${REMARK}\",\"callback_data\":\"switch_srv_${IDX}\"}]"
-    N=$((N+1))
-  done < /tmp/kox-servers.txt
-
-  if [ "$N" -eq 0 ]; then
+  local N
+  N=$(wc -l < /tmp/kox-servers.txt 2>/dev/null | tr -d ' ')
+  if [ "${N:-0}" -eq 0 ]; then
     update_menu "$CHAT" "❌ Не удалось разобрать серверы из подписки." "$(back_keyboard)"
     return
   fi
 
-  local KBD
-  KBD="{\"inline_keyboard\":[${ROWS#,},[{\"text\":\"◀️ Назад\",\"callback_data\":\"servers_menu\"}]]}"
-  update_menu "$CHAT" "🔀 <b>Выберите сервер из подписки:</b>
+  # Build keyboard + info text
+  local ROWS="" INFO_TEXT=""
+  while IFS='|' read -r IDX HOST PORT REMARK PING_MS VLINE; do
+    [ -z "$HOST" ] && continue
+    local MARK="" PING_ICON=""
+    [ "$HOST" = "$CURRENT_SRV" ] && MARK="✅ "
+    # Ping icon by latency
+    case "$PING_MS" in
+      —) PING_ICON="⚫" ;;
+      *)
+        local P_INT
+        P_INT=$(printf '%s' "$PING_MS" | cut -d. -f1)
+        if   [ "$P_INT" -lt 50  ] 2>/dev/null; then PING_ICON="🟢"
+        elif [ "$P_INT" -lt 120 ] 2>/dev/null; then PING_ICON="🟡"
+        elif [ "$P_INT" -lt 250 ] 2>/dev/null; then PING_ICON="🟠"
+        else PING_ICON="🔴"
+        fi
+        ;;
+    esac
+    local BTN_LABEL="${MARK}${REMARK}  ${PING_ICON} ${PING_MS} ms"
+    ROWS="${ROWS},[{\"text\":\"${BTN_LABEL}\",\"callback_data\":\"switch_srv_${IDX}\"}]"
+    INFO_TEXT="${INFO_TEXT}${MARK}${PING_ICON} <b>${REMARK}</b> — <code>${HOST}:${PORT}</code> — <code>${PING_MS} ms</code>
+"
+  done < /tmp/kox-servers.txt
 
-✅ — текущий активный сервер
-Всего: <b>${N}</b> серверов" "$KBD"
+  local KBD
+  KBD="{\"inline_keyboard\":[${ROWS#,},[{\"text\":\"🔄 Обновить\",\"callback_data\":\"switch_list\"},{\"text\":\"◀️ Назад\",\"callback_data\":\"servers_menu\"}]]}"
+
+  update_menu "$CHAT" "🔀 <b>Выберите сервер:</b>
+
+${INFO_TEXT}
+🟢&lt;50ms  🟡&lt;120ms  🟠&lt;250ms  🔴высокий  ⚫нет ответа
+✅ — текущий сервер" "$KBD"
 }
 
 # Actually switch to the selected server (safe: backup + restore on failure)
@@ -386,24 +398,26 @@ h_do_switch() {
     return
   fi
 
-  local VLESS_URL
-  VLESS_URL=$(grep "^${IDX}|" /tmp/kox-servers.txt | cut -d'|' -f2-)
-  if [ -z "$VLESS_URL" ]; then
+  # Format: IDX|HOST|PORT|REMARK|PING|VLESS_URL
+  local SRV_LINE
+  SRV_LINE=$(grep "^${IDX}|" /tmp/kox-servers.txt | head -1)
+  if [ -z "$SRV_LINE" ]; then
     update_menu "$CHAT" "❌ Сервер #${IDX} не найден. Нажмите «Сменить сервер» снова." "$(back_keyboard)"
     return
   fi
 
-  # Parse VLESS URL
-  local UUID HOSTPORT HOST PORT PARAMS SNI FLOW
+  local VLESS_URL HOST PORT REMARK
+  HOST=$(printf '%s' "$SRV_LINE" | cut -d'|' -f2)
+  PORT=$(printf '%s' "$SRV_LINE" | cut -d'|' -f3)
+  REMARK=$(printf '%s' "$SRV_LINE" | cut -d'|' -f4)
+  VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -d'|' -f6-)
+
+  # Parse VLESS URL for config fields
+  local UUID PARAMS SNI FLOW
   UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
-  HOSTPORT=$(printf '%s' "$VLESS_URL" | sed 's|vless://[^@]*@\([^?]*\).*|\1|')
-  HOST=$(printf '%s' "$HOSTPORT" | cut -d: -f1)
-  PORT=$(printf '%s' "$HOSTPORT" | cut -d: -f2)
   PARAMS=$(printf '%s' "$VLESS_URL" | grep -o '?[^#]*' | sed 's/^?//')
   SNI=$(printf '%s' "$PARAMS" | grep -o 'sni=[^&]*' | cut -d= -f2)
   FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-  REMARK=$(printf '%s' "$VLESS_URL" | grep -o '#.*' | sed 's/#//' | \
-    python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null || echo "$HOST")
 
   if [ -z "$UUID" ] || [ -z "$HOST" ]; then
     update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
