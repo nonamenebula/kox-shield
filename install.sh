@@ -335,6 +335,12 @@ setup_nat() {
 #!/bin/sh
 [ "$1" = "ip6tables" ] && IPTS=ip6tables || IPTS=iptables
 
+# Не применять если пользователь вручную выключил VPN
+[ -f /tmp/kox-vpn-off ] && exit 0
+
+# Не применять если Xray не запущен — иначе весь трафик уйдёт в никуда
+pgrep xray >/dev/null 2>&1 || exit 0
+
 $IPTS -t nat -N XRAY_REDIRECT 2>/dev/null || $IPTS -t nat -F XRAY_REDIRECT
 
 # Пропустить приватные IP
@@ -355,65 +361,50 @@ $IPTS -t nat -A PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
 NATSCRIPT
 
   chmod +x "${NAT_DIR}/99-kox-nat.sh"
-  sh "${NAT_DIR}/99-kox-nat.sh" 2>/dev/null || true
   ok "iptables правила настроены"
 
-  # Watchdog v2: проверяет процесс Xray И активность порта 10808.
-  # Если упал — снимает iptables, чтобы интернет работал напрямую, и пытается рестартнуть.
-  cat > /opt/etc/kox-watchdog.sh << 'WATCHDOG'
+  # Watchdog: скачиваем актуальный watchdog v4 с GitHub (failover, Telegram, auto-return) (failover, Telegram, auto-return)
+  info "Загружаю watchdog с GitHub..."
+  if curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-watchdog.sh" -o /opt/etc/kox-watchdog.sh 2>/dev/null \
+      && [ -s /opt/etc/kox-watchdog.sh ]; then
+    chmod +x /opt/etc/kox-watchdog.sh
+    ok "Watchdog загружен (/opt/etc/kox-watchdog.sh)"
+  else
+    warn "Не удалось загрузить watchdog с GitHub — используем встроенный"
+    cat > /opt/etc/kox-watchdog.sh << 'WATCHDOG_FALLBACK'
 #!/bin/sh
-# KOX Watchdog v2 — проверяет xray И реальный VPN тоннель
-XRAY_INIT="/opt/etc/init.d/S24xray"
+# KOX Watchdog (fallback) — минимальная версия
+KOXCONF="/opt/etc/xray/kox.conf"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
 LOGF="/opt/var/log/kox-watchdog.log"
-TS=$(date '+%H:%M:%S')
-VPN_OFF_MARKER="/tmp/kox-vpn-off"
-
-# Если юзер вручную выключил — не трогать
-[ -f "$VPN_OFF_MARKER" ] && exit 0
-
-log() { echo "$TS $*" >> "$LOGF"; }
-
-# 1. Проверяем что xray работает
+TS=$(date '+%Y-%m-%d %H:%M:%S')
+[ -f /tmp/kox-vpn-off ] && exit 0
+log() { printf '%s %s\n' "$TS" "$*" >> "$LOGF"; }
 if ! pgrep xray >/dev/null 2>&1; then
   log "Xray не работает — снимаю iptables"
   iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  if [ -f "$XRAY_INIT" ]; then
-    "$XRAY_INIT" start 2>/dev/null
-    sleep 5
-    if pgrep xray >/dev/null 2>&1; then
-      sh "$NAT_SCRIPT" 2>/dev/null && log "Xray перезапущен, iptables восстановлен"
-    else
-      log "Xray не удалось перезапустить — интернет напрямую"
-    fi
+  ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  /opt/etc/init.d/S24xray start 2>/dev/null; sleep 5
+  if pgrep xray >/dev/null 2>&1; then
+    sh "$NAT_SCRIPT" 2>/dev/null; log "Xray перезапущен"
+  else
+    log "Xray не запустился — интернет напрямую"
+    iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   fi
   exit 0
 fi
-
-# 2. Проверяем порт xray (BusyBox nc не имеет -z, используем netstat)
-if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
-  log "Xray порт 10808 не слушает — перезапуск"
-  # BusyBox не имеет pkill — используем killall
-  killall xray 2>/dev/null; sleep 2
-  "$XRAY_INIT" start 2>/dev/null &
-  exit 0
-fi
-
-# 3. Проверяем iptables (восстановить если пропали)
-if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
-  log "iptables правила пропали — восстанавливаю"
-  sh "$NAT_SCRIPT" 2>/dev/null
-fi
-
-# 4. Ротация лога
-[ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 300 ] && \
-  tail -150 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
-WATCHDOG
-
-  chmod +x /opt/etc/kox-watchdog.sh
+! netstat -ln 2>/dev/null | grep -q ':10808 ' && { killall xray 2>/dev/null; sleep 2; /opt/etc/init.d/S24xray start 2>/dev/null &; }
+! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT && sh "$NAT_SCRIPT" 2>/dev/null
+[ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 300 ] && tail -150 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
+WATCHDOG_FALLBACK
+    chmod +x /opt/etc/kox-watchdog.sh
+  fi
 
   # Добавить watchdog в cron (каждую минуту)
   CRON_LINE="* * * * * /opt/etc/kox-watchdog.sh"

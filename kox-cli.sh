@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.13.01"
+KOX_VERSION="2026.05.13.02"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -1280,6 +1280,29 @@ kox_upgrade() {
     chmod +x /tmp/kox-upgrade-init
     mv /tmp/kox-upgrade-init "$BOT_INIT"
     ok "S90kox-bot обновлён"
+  fi
+
+  # kox-watchdog.sh → /opt/etc/kox-watchdog.sh
+  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-watchdog.sh" -o /tmp/kox-upgrade-wd 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-wd ]; then
+    chmod +x /tmp/kox-upgrade-wd
+    mv /tmp/kox-upgrade-wd /opt/etc/kox-watchdog.sh
+    ok "Watchdog обновлён (/opt/etc/kox-watchdog.sh)"
+  else
+    warn "Не удалось загрузить kox-watchdog.sh"
+  fi
+
+  # 99-kox-nat.sh — добавить guard pgrep xray если ещё нет
+  NAT_FILE="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+  if [ -f "$NAT_FILE" ] && ! grep -q "pgrep xray" "$NAT_FILE" 2>/dev/null; then
+    # Вставить guard после первой строки (#!/bin/sh)
+    sed -i '1a\
+\
+# Не применять если Xray не запущен — иначе весь трафик уйдёт в никуда\
+[ -f /tmp/kox-vpn-off ] && exit 0\
+pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
+      ok "NAT-скрипт обновлён (добавлена защита от blackhole)" || \
+      warn "Не удалось обновить NAT-скрипт"
   fi
 
   [ "$FAIL" -eq 1 ] && return 1

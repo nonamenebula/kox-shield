@@ -55,8 +55,10 @@ if ! pgrep xray >/dev/null 2>&1; then
   log "Xray не работает — снимаю iptables"
   iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   if [ -f /opt/etc/init.d/S24xray ]; then
     /opt/etc/init.d/S24xray start 2>/dev/null
     sleep 5
@@ -64,7 +66,20 @@ if ! pgrep xray >/dev/null 2>&1; then
       sh "$NAT_SCRIPT" 2>/dev/null
       log "Xray перезапущен, iptables восстановлен"
     else
-      log "Xray не удалось перезапустить"
+      log "Xray не удалось перезапустить — принудительно очищаю iptables"
+      # Удаляем ОБА правила (TCP + UDP/443), которые могли вернуться через netfilter.d
+      iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+      iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+      iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+      ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+      ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+      ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+      tg_notify "❌ <b>KOX Shield — Xray не запускается</b>
+
+Xray упал и не смог перезапуститься.
+Iptables сняты — интернет работает напрямую (без VPN).
+
+Проверьте лог: <code>kox log</code>"
     fi
   fi
   exit 0
