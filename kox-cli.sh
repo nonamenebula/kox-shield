@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.13.02"
+KOX_VERSION="2026.05.13.03"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -185,6 +185,7 @@ kox_off() {
 
 kox_restart() {
   info "Перезапускаю Xray..."
+  ulimit -n 65535 2>/dev/null || true
   "$XRAY_INIT" restart
   sleep 2
   if pgrep xray >/dev/null 2>&1; then
@@ -1303,6 +1304,13 @@ kox_upgrade() {
 pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
       ok "NAT-скрипт обновлён (добавлена защита от blackhole)" || \
       warn "Не удалось обновить NAT-скрипт"
+  fi
+
+  # S24xray — добавить ulimit если ещё нет (защита от too many open files)
+  if [ -f "$XRAY_INIT" ] && ! grep -q "ulimit" "$XRAY_INIT" 2>/dev/null; then
+    sed -i 's|^\. /opt/etc/init.d/rc.func|ulimit -n 65535 2>/dev/null || true\n. /opt/etc/init.d/rc.func|' "$XRAY_INIT" 2>/dev/null && \
+      ok "S24xray обновлён (добавлен ulimit -n 65535)" || \
+      warn "Не удалось обновить S24xray (добавьте ulimit вручную)"
   fi
 
   [ "$FAIL" -eq 1 ] && return 1

@@ -183,6 +183,7 @@ ENABLED=yes
 PROCS=xray
 ARGS="-config /opt/etc/xray/config.json"
 PIDFILE=/var/run/xray.pid
+ulimit -n 65535 2>/dev/null || true
 . /opt/etc/init.d/rc.func
 INITSCRIPT
     chmod +x "${INIT}/S24xray"

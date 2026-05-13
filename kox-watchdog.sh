@@ -60,6 +60,7 @@ if ! pgrep xray >/dev/null 2>&1; then
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   if [ -f /opt/etc/init.d/S24xray ]; then
+    ulimit -n 65535 2>/dev/null || true
     /opt/etc/init.d/S24xray start 2>/dev/null
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
