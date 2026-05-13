@@ -82,7 +82,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Подключитесь к роутеру по SSH (порт 222) и выполните одну команду:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
+wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh && sh /tmp/kox-install.sh
 ```
 
 > **Требования:** Keenetic с установленным [Entware](https://help.keenetic.com/hc/ru/articles/360021214160)

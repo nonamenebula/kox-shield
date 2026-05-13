@@ -105,7 +105,7 @@ vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PU
 Connect to your router via SSH (port 222) and run one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
+wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh && sh /tmp/kox-install.sh
 ```
 
 > **Requirements:** Keenetic router with [Entware](https://help.keenetic.com/hc/en-us/articles/360021214160) installed

@@ -5,7 +5,7 @@
 # ╚══════════════════════════════════════════════════════════════════╝
 #
 # Запуск на роутере одной командой:
-#   wget -qO- https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh | sh
+#   wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh && sh /tmp/kox-install.sh
 #
 # Требования:
 #   • Keenetic с установленным Entware (/opt)
@@ -30,6 +30,16 @@ info() { printf " ${C}•${N}  %s\n" "$*"; }
 warn() { printf " ${Y}!${N}  %s\n" "$*"; }
 sep()  { printf "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"; }
 ask()  { printf " ${W}?${N}  %s " "$*"; }
+
+read_tty() {
+  # The installer is usually started as `wget -qO- ... | sh`, so stdin is the
+  # script pipe, not the user's keyboard. Read interactive answers from TTY.
+  if [ -r /dev/tty ]; then
+    IFS= read -r "$1" </dev/tty
+  else
+    IFS= read -r "$1"
+  fi
+}
 
 banner() {
   printf "\n"
@@ -140,7 +150,7 @@ parse_subscription() {
   sep
   printf "\n"
   ask "Выберите сервер [1-${COUNT}], Enter = 1:"
-  read -r CHOICE
+  read_tty CHOICE
   [ -z "$CHOICE" ] && CHOICE=1
 
   VLESS_URL=$(sed -n "${CHOICE}p" "$TMPLIST")
@@ -501,7 +511,7 @@ printf "\n"
 printf "  Введите ${W}URL подписки${N} (https://...) или ${W}VLESS URL${N} (vless://...):\n"
 printf "\n"
 ask "→"
-read -r USER_INPUT
+read_tty USER_INPUT
 [ -z "$USER_INPUT" ] && fail "Ввод не может быть пустым"
 
 if printf '%s' "$USER_INPUT" | grep -q '^vless://'; then
