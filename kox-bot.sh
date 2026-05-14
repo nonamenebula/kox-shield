@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.14.02"
+KOX_VERSION="2026.05.14.03"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -377,6 +377,8 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
         ;;
     esac
     local BTN_LABEL="${MARK}${REMARK}  ${PING_ICON} ${PING_MS} ms"
+    # Sanitize for JSON string: escape backslashes and double-quotes
+    BTN_LABEL=$(printf '%s' "$BTN_LABEL" | sed 's/\\/\\\\/g; s/"/\\"/g')
     if [ "$HOST" = "$CURRENT_SRV" ]; then
       # Current server — tapping it does nothing (noop callback)
       ROWS="${ROWS},[{\"text\":\"${BTN_LABEL}\",\"callback_data\":\"srv_already_active\"}]"
@@ -1602,8 +1604,14 @@ while true; do
       MSG_ID=$(echo "$UPDATE"  | jq -r '.callback_query.message.message_id')
       TEXT=$(echo "$UPDATE"    | jq -r '.callback_query.data // ""')
       IS_CB=1
-      # The callback message IS our sticky menu
-      sticky_save "$MSG_ID"
+      # Update sticky only if callback came from the current sticky message
+      # (or no sticky exists yet).  Callbacks from notification messages must
+      # NOT override the sticky or future update_menu calls will edit the
+      # wrong message instead of the main menu.
+      _CUR_STICKY=$(sticky_load)
+      if [ -z "$_CUR_STICKY" ] || [ "$MSG_ID" = "$_CUR_STICKY" ]; then
+        sticky_save "$MSG_ID"
+      fi
     elif echo "$UPDATE" | jq -e '.message' >/dev/null 2>&1; then
       FROM_ID=$(echo "$UPDATE"    | jq -r '.message.from.id')
       CHAT_ID=$(echo "$UPDATE"    | jq -r '.message.chat.id')

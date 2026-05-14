@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.14.02"
+KOX_VERSION="2026.05.14.03"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -911,8 +911,16 @@ kox_admin() {
 }
 
 KOX_LISTS_DIR="/opt/etc/xray/lists"
-KOX_LISTS_LOADED="/opt/etc/xray/kox-lists-loaded.conf"
+KOX_LISTS_LOADED="/opt/etc/xray/lists/kox-lists-loaded.conf"
 GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
+
+# Миграция: старый путь kox-lists-loaded.conf → новый внутри lists/
+_OLD_LL="/opt/etc/xray/kox-lists-loaded.conf"
+if [ -f "$_OLD_LL" ] && [ ! -f "$KOX_LISTS_LOADED" ]; then
+  mkdir -p "$KOX_LISTS_DIR"
+  cp "$_OLD_LL" "$KOX_LISTS_LOADED" 2>/dev/null && rm -f "$_OLD_LL" 2>/dev/null || true
+fi
+unset _OLD_LL
 
 _list_is_loaded() { grep -qx "$1" "$KOX_LISTS_LOADED" 2>/dev/null; }
 _list_mark_loaded() {
@@ -1254,7 +1262,7 @@ kox_upgrade() {
   FAIL=0
 
   # kox-cli.sh → /opt/bin/kox
-  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
       && [ -s /tmp/kox-upgrade-cli ]; then
     chmod +x /tmp/kox-upgrade-cli
     mv /tmp/kox-upgrade-cli /opt/bin/kox
@@ -1266,7 +1274,7 @@ kox_upgrade() {
   fi
 
   # kox-bot.sh → /opt/bin/kox-bot
-  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
       && [ -s /tmp/kox-upgrade-bot ]; then
     chmod +x /tmp/kox-upgrade-bot
     mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
@@ -1276,7 +1284,7 @@ kox_upgrade() {
   fi
 
   # S90kox-bot → /opt/etc/init.d/S90kox-bot
-  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
       && [ -s /tmp/kox-upgrade-init ]; then
     chmod +x /tmp/kox-upgrade-init
     mv /tmp/kox-upgrade-init "$BOT_INIT"
@@ -1284,7 +1292,7 @@ kox_upgrade() {
   fi
 
   # kox-watchdog.sh → /opt/etc/kox-watchdog.sh
-  if curl -sSL --max-time 30 "${GITHUB_RAW_UP}/kox-watchdog.sh" -o /tmp/kox-upgrade-wd 2>/dev/null \
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-watchdog.sh" -o /tmp/kox-upgrade-wd 2>/dev/null \
       && [ -s /tmp/kox-upgrade-wd ]; then
     chmod +x /tmp/kox-upgrade-wd
     mv /tmp/kox-upgrade-wd /opt/etc/kox-watchdog.sh
