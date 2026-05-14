@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.14.03"
+KOX_VERSION="2026.05.14.04"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -506,13 +506,9 @@ h_do_switch() {
   cp "$CONF" /tmp/kox-config-backup.json 2>/dev/null
   cp "$KOXCONF" /tmp/kox-conf-backup 2>/dev/null
 
-  # Update kox.conf — note: FLOW may be EMPTY (don't default it!)
-  conf_set KOX_SERVER "$HOST"
-  conf_set KOX_PORT "${PORT:-443}"
-  conf_set KOX_UUID "$UUID"
-  conf_set KOX_SNI "${SNI:-www.google.com}"
-  conf_set KOX_FLOW "$FLOW"
-
+  # ── Step 1: build new config.json via jq ─────────────────────────────
+  # CRITICAL: run jq BEFORE touching kox.conf so a jq failure leaves both
+  # files consistent (still pointing at the old server).
   # Update config.json via jq (preserves inbounds; updates all Reality fields).
   # CRITICAL: $flow is set to whatever the URL says — empty string if missing.
   # For Reality servers without Vision flow, the server's user config has no
@@ -541,9 +537,27 @@ h_do_switch() {
       else . end
     ]
   ' "$CONF" > "$TMP_CONF" 2>/dev/null
-  if [ -s "$TMP_CONF" ]; then
-    mv "$TMP_CONF" "$CONF"
+
+  if ! [ -s "$TMP_CONF" ] || ! jq -e . "$TMP_CONF" >/dev/null 2>&1; then
+    rm -f "$TMP_CONF"
+    update_menu "$CHAT" "❌ <b>Ошибка генерации конфига (jq)</b>
+
+Переключение отменено — текущий сервер не изменён.
+Попробуйте снова или проверьте лог: <code>kox log</code>" \
+      "$(main_keyboard)"
+    return
   fi
+
+  # ── Step 2: NOW update kox.conf (jq already succeeded) ───────────────
+  # note: FLOW may be EMPTY (don't default it!)
+  conf_set KOX_SERVER "$HOST"
+  conf_set KOX_PORT "${PORT:-443}"
+  conf_set KOX_UUID "$UUID"
+  conf_set KOX_SNI "${SNI:-www.google.com}"
+  conf_set KOX_FLOW "$FLOW"
+
+  # ── Step 3: atomically replace config.json ────────────────────────────
+  mv "$TMP_CONF" "$CONF"
 
   # Restart xray (do stop/start manually to control timing).
   # NOTE: BusyBox on Keenetic does NOT have pkill, only killall/pidof/kill.
@@ -1402,13 +1416,15 @@ h_set_preferred() {
   local SRV_LINE
   SRV_LINE=$(grep "^${IDX}	" /tmp/kox-pref-servers.txt | head -1)
   [ -z "$SRV_LINE" ] && { update_menu "$CHAT" "❌ Сервер не найден" "$(back_keyboard)"; return; }
-  local HOST ENC_REMARK REMARK
+  local HOST ENC_REMARK REMARK PORT
   HOST=$(printf '%s' "$SRV_LINE" | cut -f2)
+  PORT=$(printf '%s' "$SRV_LINE" | cut -f3)
   ENC_REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
   REMARK=$(urldecode "$ENC_REMARK")
   [ -z "$REMARK" ] && REMARK="$HOST"
 
   conf_set KOX_PREFERRED_HOST   "$HOST"
+  conf_set KOX_PREFERRED_PORT   "${PORT:-443}"
   conf_set KOX_PREFERRED_REMARK "$REMARK"
   rm -f /tmp/kox-pref-servers.txt
 

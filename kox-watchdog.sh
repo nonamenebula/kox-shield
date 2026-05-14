@@ -30,6 +30,7 @@ log() { printf '%s %s\n' "$TS" "$*" >> "$LOGF"; }
 FAILOVER_MINUTES="${KOX_FAILOVER_MINUTES:-10}"
 AUTO_RETURN="${KOX_AUTO_RETURN:-yes}"
 PREF_HOST="${KOX_PREFERRED_HOST:-}"
+PREF_PORT="${KOX_PREFERRED_PORT:-443}"
 PREF_REMARK="${KOX_PREFERRED_REMARK:-основной сервер}"
 
 # ── Отправить сообщение в Telegram ───────────────────────────────────
@@ -109,7 +110,7 @@ if [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$P
   # Мы на резервном — проверяем вернулся ли основной (только pre-flight, быстро)
   PREF_BACK=0
   curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
-    "https://${PREF_HOST}/" 2>/dev/null && PREF_BACK=1
+    "https://${PREF_HOST}:${PREF_PORT}/" 2>/dev/null && PREF_BACK=1
   [ "$PREF_BACK" = "0" ] && ping -c 1 -W 2 "$PREF_HOST" >/dev/null 2>&1 && PREF_BACK=1
 
   if [ "$PREF_BACK" = "1" ]; then
