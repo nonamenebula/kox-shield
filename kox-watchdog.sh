@@ -289,6 +289,30 @@ VPN восстановлен.${RETURN_NOTE}"
     ;;
 esac
 
-# ── 7. Ротация лога ───────────────────────────────────────────────────
+# ── 7. Проверка и авто-восстановление Telegram бота ──────────────────
+# Решает проблему когда бот падает (например после самообновления).
+# Watchdog крутится каждую минуту — бот поднимется без SSH и без ребута.
+BOT_INIT="/opt/etc/init.d/S90kox-bot"
+BOT_LOCK="/tmp/kox-bot.lock"
+if [ -f "$BOT_INIT" ]; then
+  BOT_RUNNING=0
+  if [ -f "$BOT_LOCK" ]; then
+    BOT_PID=$(cat "$BOT_LOCK" 2>/dev/null)
+    kill -0 "$BOT_PID" 2>/dev/null && BOT_RUNNING=1
+  fi
+  if [ "$BOT_RUNNING" = "0" ]; then
+    log "Telegram бот не работает — перезапускаю"
+    rm -f "$BOT_LOCK" 2>/dev/null
+    "$BOT_INIT" start >/dev/null 2>&1
+    sleep 2
+    if [ -f "$BOT_LOCK" ] && kill -0 "$(cat "$BOT_LOCK" 2>/dev/null)" 2>/dev/null; then
+      log "Telegram бот восстановлен"
+    else
+      log "Telegram бот не удалось запустить"
+    fi
+  fi
+fi
+
+# ── 8. Ротация лога ───────────────────────────────────────────────────
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 500 ] && \
   tail -250 "$LOGF" > "${LOGF}.tmp" && mv "${LOGF}.tmp" "$LOGF"
