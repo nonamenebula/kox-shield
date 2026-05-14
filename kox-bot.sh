@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.13.03"
+KOX_VERSION="2026.05.14.01"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -23,6 +23,7 @@ GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lis
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 KOX_LISTS_DIR="/opt/etc/xray/lists"
 KOX_LASTCHECK_FILE="/opt/etc/xray/.kox-ver-lastcheck"
+KOX_VER_NOTIFIED_FILE="/opt/etc/xray/.kox-upgrade-notified"
 LISTS_LASTCHECK_FILE="/opt/etc/xray/.lists-lastcheck"
 CHECK_INTERVAL=21600  # 6 hours
 
@@ -929,7 +930,7 @@ snooze() {
 }
 
 lists_set_snooze()   { snooze KOX_LIST_NOTIFY_SKIP_UNTIL "$1"; }
-upgrade_set_snooze() { snooze KOX_UPGRADE_NOTIFY_SKIP_UNTIL "$1"; }
+upgrade_set_snooze() { snooze KOX_UPGRADE_NOTIFY_SKIP_UNTIL "$1"; rm -f "$KOX_VER_NOTIFIED_FILE" 2>/dev/null || true; }
 
 lists_disable_notify()   { conf_set KOX_LIST_NOTIFY no; }
 upgrade_disable_notify() { conf_set KOX_UPGRADE_NOTIFY no; }
@@ -954,6 +955,12 @@ check_kox_update() {
   LOCAL_VER="$KOX_VERSION"
   CUR_INT=$(printf '%s' "$LOCAL_VER" | tr -d '.'); REM_INT=$(printf '%s' "$REMOTE_VER" | tr -d '.')
   [ "$REM_INT" -le "$CUR_INT" ] 2>/dev/null && return 0
+
+  # Only notify once per remote version — prevents re-sending every 6 hours
+  # while an update is pending.  Cleared by upgrade_set_snooze() so the
+  # reminder fires once after each snooze period expires.
+  LAST_NOTIFIED=$(cat "$KOX_VER_NOTIFIED_FILE" 2>/dev/null | tr -d '[:space:]')
+  [ "$LAST_NOTIFIED" = "$REMOTE_VER" ] && return 0
 
   # Fetch changelog for this version
   CHANGELOG=$(tg_curl -fsSL --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null | \
@@ -1000,6 +1007,7 @@ $(printf '%s' "$CHANGELOG" | sed 's/^/• /')"
   PAYLOAD=$(jq -cn --argjson c "$ADMIN_ID" --arg t "$MSG" --argjson k "$KBD" \
     '{chat_id:$c,text:$t,parse_mode:"HTML",reply_markup:$k}')
   api_call "sendMessage" "$PAYLOAD" >/dev/null 2>&1
+  printf '%s' "$REMOTE_VER" > "$KOX_VER_NOTIFIED_FILE"
   log "KOX upgrade notification sent for v${REMOTE_VER}"
 }
 

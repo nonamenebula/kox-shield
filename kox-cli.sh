@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.13.03"
+KOX_VERSION="2026.05.14.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -1318,7 +1318,7 @@ pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
   sep
   ok "Обновление завершено! Версия: ${W}v${REMOTE_VERSION}${N}"
   info "Перезапускаю Telegram бота..."
-  # Kill ALL bot instances first.
+  # Step 1: SIGTERM all kox-bot instances.
   # BusyBox on Keenetic doesn't have pkill — match by /proc/*/cmdline.
   for p in /proc/[0-9]*/cmdline; do
     if grep -q "kox-bot" "$p" 2>/dev/null; then
@@ -1327,6 +1327,22 @@ pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
     fi
   done
   sleep 2
+  # Step 2: SIGKILL any stragglers.  This also handles the deferred-SIGTERM
+  # race: when kox_upgrade is called synchronously from the bot, BusyBox ash
+  # defers SIGTERM to the parent while it waits for us (a child process).
+  # So the bot that launched us may still be alive and holding the lock file
+  # at this point.  We must force-kill it and clear the lock before starting
+  # the new bot, otherwise S90kox-bot start() sees the stale lock and skips.
+  for p in /proc/[0-9]*/cmdline; do
+    if grep -q "kox-bot" "$p" 2>/dev/null; then
+      pid=${p#/proc/}; pid=${pid%/cmdline}
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done
+  sleep 1
+  # Step 3: Remove stale lock unconditionally — no legitimate bot is running.
+  rm -f /tmp/kox-bot.lock /tmp/kox-bot-wait 2>/dev/null || true
+  # Step 4: Start fresh.
   "$BOT_INIT" start >/dev/null 2>&1 && ok "Бот перезапущен" || warn "Не удалось запустить бота"
   info "Изменения в консоли вступят в силу в следующем SSH-сеансе"
 
