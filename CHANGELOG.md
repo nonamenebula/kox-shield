@@ -1,5 +1,11 @@
 # CHANGELOG — KOX Shield
 
+## 2026.05.18.02
+
+### 🐛 `kox upgrade`: пост-шаги из нового скрипта
+
+- После замены `/opt/bin/kox` вызывается `sh /opt/bin/kox _upgrade-post`, чтобы патч `S24xray` и cron `kox-xray-refresh` применялись новым кодом (старый процесс upgrade держит прежние функции в памяти).
+
 ## 2026.05.18.01
 
 ### 🐛 Исправление: повторное падение Xray (`too many open files`)
