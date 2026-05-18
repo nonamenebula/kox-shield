@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.18.01"
+KOX_VERSION="2026.05.18.02"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -62,6 +62,18 @@ kox_install_maintenance_cron() {
   crontab -l 2>/dev/null | grep -q 'kox-xray-refresh' && return 0
   (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab - 2>/dev/null || \
     echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+}
+
+kox_upgrade_post() {
+  kox_patch_s24xray 2>/dev/null
+  if grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
+    ok "S24xray: ulimit -n 65535 (защита от too many open files)"
+  elif [ -f "$XRAY_INIT" ]; then
+    warn "Не удалось пропатчить S24xray — добавьте ulimit вручную"
+  fi
+  kox_install_maintenance_cron 2>/dev/null && \
+    ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
+    warn "Не удалось добавить cron kox-xray-refresh"
 }
 
 # OSC 8 clickable hyperlink (works in iTerm2, VSCode, Kitty, etc.)
@@ -1356,18 +1368,10 @@ pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
       warn "Не удалось обновить NAT-скрипт"
   fi
 
-  # S24xray — ulimit (BusyBox awk, не sed с \n)
-  if kox_patch_s24xray 2>/dev/null; then
-    if grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
-      ok "S24xray: ulimit -n 65535 (защита от too many open files)"
-    fi
-  elif [ -f "$XRAY_INIT" ] && ! grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
-    warn "Не удалось обновить S24xray — выполните: sed -i '1a ulimit -n 65535 2>/dev/null || true' $XRAY_INIT"
+  # S24xray + cron: шаги из НОВОГО /opt/bin/kox (этот процесс ещё со старым кодом в RAM)
+  if [ "$FAIL" -eq 0 ] && [ -x /opt/bin/kox ]; then
+    sh /opt/bin/kox _upgrade-post 2>/dev/null || true
   fi
-
-  kox_install_maintenance_cron 2>/dev/null && \
-    ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
-    warn "Не удалось добавить cron kox-xray-refresh"
 
   [ "$FAIL" -eq 1 ] && return 1
 
@@ -1836,6 +1840,7 @@ case "$CMD" in
   list-check)    kox_list_check ;;
   list-update)   kox_list_update ;;
   upgrade)       kox_upgrade "$@" ;;
+  _upgrade-post) kox_upgrade_post ;;
   servers)       kox_servers ;;
   switch)        kox_switch "$@" ;;
   switch-auto)   kox_switch_auto "$@" ;;
