@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX Watchdog v4
+# KOX Watchdog v5
 # — перезапускает xray при падении
 # — считает минуты без VPN (порог: KOX_FAILOVER_MINUTES, default 10)
 # — переключается на резервный сервер после N минут
@@ -10,11 +10,13 @@ KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
 LOGF="/opt/var/log/kox-watchdog.log"
-TS=$(date '+%Y-%m-%d %H:%M:%S')
+ERRLOG="/opt/var/log/xray-err.log"
+CRASHLOG="/opt/var/log/xray-err.last-crash.log"
 VPN_OFF_MARKER="/tmp/kox-vpn-off"
 FAIL_COUNT_FILE="/tmp/kox-vpn-fail-count"
 LAST_SWITCH_FILE="/tmp/kox-last-auto-switch"
 SWITCHING_LOCK="/tmp/kox-autoswitch.lock"
+XRAY_INIT="/opt/etc/init.d/S24xray"
 
 # Если юзер вручную выключил VPN — не трогать
 [ -f "$VPN_OFF_MARKER" ] && exit 0
@@ -22,7 +24,32 @@ SWITCHING_LOCK="/tmp/kox-autoswitch.lock"
 # Если уже идёт авто-переключение — не запускать снова
 [ -f "$SWITCHING_LOCK" ] && exit 0
 
-log() { printf '%s %s\n' "$TS" "$*" >> "$LOGF"; }
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOGF"; }
+
+kox_xray_ulimit() { ulimit -n 65535 2>/dev/null || true; }
+
+kox_xray_start() {
+  kox_xray_ulimit
+  if [ -x "$XRAY_INIT" ]; then
+    "$XRAY_INIT" start 2>/dev/null
+  else
+    /opt/sbin/xray -config "$CONF" >> "$ERRLOG" 2>&1 &
+  fi
+}
+
+kox_xray_restart() {
+  kox_save_crash_log
+  kox_xray_ulimit
+  killall xray 2>/dev/null || true
+  sleep 2
+  kox_xray_start
+}
+
+kox_save_crash_log() {
+  [ -s "$ERRLOG" ] || return 0
+  printf '\n--- %s watchdog ---\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$CRASHLOG"
+  tail -25 "$ERRLOG" >> "$CRASHLOG" 2>/dev/null
+}
 
 # Загрузить конфиг
 [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
@@ -32,6 +59,7 @@ AUTO_RETURN="${KOX_AUTO_RETURN:-yes}"
 PREF_HOST="${KOX_PREFERRED_HOST:-}"
 PREF_PORT="${KOX_PREFERRED_PORT:-443}"
 PREF_REMARK="${KOX_PREFERRED_REMARK:-основной сервер}"
+FD_WARN="${KOX_FD_WARN:-800}"
 
 # ── Отправить сообщение в Telegram ───────────────────────────────────
 tg_notify() {
@@ -60,9 +88,9 @@ if ! pgrep xray >/dev/null 2>&1; then
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-  if [ -f /opt/etc/init.d/S24xray ]; then
-    ulimit -n 65535 2>/dev/null || true
-    /opt/etc/init.d/S24xray start 2>/dev/null
+  kox_save_crash_log
+  if [ -f "$XRAY_INIT" ] || [ -x /opt/sbin/xray ]; then
+    kox_xray_start
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
       sh "$NAT_SCRIPT" 2>/dev/null
@@ -90,8 +118,14 @@ fi
 # ── 2. Проверяем порт 10808 ───────────────────────────────────────────
 if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
   log "Xray порт 10808 не слушает — перезапуск"
-  killall xray 2>/dev/null; sleep 2
-  /opt/etc/init.d/S24xray start 2>/dev/null &
+  kox_xray_restart
+  sleep 5
+  if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
+    sh "$NAT_SCRIPT" 2>/dev/null
+    log "Xray перезапущен после сбоя порта 10808"
+  else
+    log "Xray не удалось перезапустить (порт 10808)"
+  fi
   exit 0
 fi
 
@@ -168,9 +202,7 @@ if [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$P
       sed -i "s|^KOX_PORT=.*|KOX_PORT=\"${P}\"|" "$KOXCONF" 2>/dev/null
       sed -i "s|^KOX_UUID=.*|KOX_UUID=\"${UUID}\"|" "$KOXCONF" 2>/dev/null
 
-      killall xray 2>/dev/null; sleep 2
-      [ -x /opt/etc/init.d/S24xray ] && /opt/etc/init.d/S24xray start >/dev/null 2>&1 || \
-        /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+      kox_xray_restart
 
       # Poll xray
       for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -186,8 +218,7 @@ if [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$P
       done
       # Tunnel failed — restore
       cp /tmp/kox-wd-backup.json "$CONF" 2>/dev/null
-      killall xray 2>/dev/null; sleep 2
-      [ -x /opt/etc/init.d/S24xray ] && /opt/etc/init.d/S24xray start >/dev/null 2>&1
+      kox_xray_start
       return 1
     }
 
@@ -290,7 +321,31 @@ VPN восстановлен.${RETURN_NOTE}"
     ;;
 esac
 
-# ── 7. Проверка и авто-восстановление Telegram бота ──────────────────
+# ── 7. Профилактика: слишком много открытых файловых дескрипторов ─────
+XPID=$(pgrep xray 2>/dev/null | head -1)
+if [ -n "$XPID" ] && [ -d "/proc/$XPID/fd" ]; then
+  FD_COUNT=$(ls "/proc/$XPID/fd" 2>/dev/null | wc -l | tr -d ' ')
+  case "$FD_COUNT" in
+    ''|*[!0-9]*) FD_COUNT=0 ;;
+  esac
+  if [ "$FD_COUNT" -ge "$FD_WARN" ] 2>/dev/null; then
+    log "Xray: ${FD_COUNT} открытых fd (порог ${FD_WARN}) — профилактический перезапуск"
+    tg_notify "⚠️ <b>KOX Shield — профилактический перезапуск Xray</b>
+
+Открыто файловых дескрипторов: <b>${FD_COUNT}</b> (порог ${FD_WARN}).
+Перезапускаю Xray, чтобы избежать падения VPN."
+    kox_xray_restart
+    sleep 5
+    if pgrep xray >/dev/null 2>&1; then
+      sh "$NAT_SCRIPT" 2>/dev/null
+      log "Профилактический перезапуск Xray выполнен (fd было ${FD_COUNT})"
+    else
+      log "Профилактический перезапуск не удался"
+    fi
+  fi
+fi
+
+# ── 8. Проверка и авто-восстановление Telegram бота ──────────────────
 # Решает проблему когда бот падает (например после самообновления).
 # Watchdog крутится каждую минуту — бот поднимется без SSH и без ребута.
 BOT_INIT="/opt/etc/init.d/S90kox-bot"
@@ -314,6 +369,6 @@ if [ -f "$BOT_INIT" ]; then
   fi
 fi
 
-# ── 8. Ротация лога ───────────────────────────────────────────────────
+# ── 9. Ротация лога ───────────────────────────────────────────────────
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 500 ] && \
   tail -250 "$LOGF" > "${LOGF}.tmp" && mv "${LOGF}.tmp" "$LOGF"

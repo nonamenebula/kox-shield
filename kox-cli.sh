@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.14.04"
+KOX_VERSION="2026.05.18.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -22,6 +22,47 @@ fail() { printf " ${R}✗${N}  %s\n" "$*"; }
 info() { printf " ${C}•${N}  %s\n" "$*"; }
 warn() { printf " ${Y}!${N}  %s\n" "$*"; }
 sep()  { printf "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"; }
+
+# ── Xray: лимит fd и патч S24xray (BusyBox-совместимо) ─────────────────
+kox_xray_ulimit() { ulimit -n 65535 2>/dev/null || true; }
+
+kox_xray_start() {
+  kox_xray_ulimit
+  if [ -x "$XRAY_INIT" ]; then
+    "$XRAY_INIT" start 2>/dev/null
+  else
+    /opt/sbin/xray -config "$CONF" >> "$ERRLOG" 2>&1 &
+  fi
+}
+
+kox_patch_s24xray() {
+  [ -f "$XRAY_INIT" ] || return 1
+  grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null && return 0
+  awk '
+    BEGIN { inserted=0 }
+    {
+      if (!inserted && $0 ~ /^\. \/opt\/etc\/init\.d\/rc\.func/) {
+        print "ulimit -n 65535 2>/dev/null || true"
+        inserted=1
+      }
+      print
+    }
+    END {
+      if (!inserted) print "ulimit -n 65535 2>/dev/null || true"
+    }
+  ' "$XRAY_INIT" > /tmp/kox-s24xray.new 2>/dev/null || return 1
+  [ -s /tmp/kox-s24xray.new ] || return 1
+  mv /tmp/kox-s24xray.new "$XRAY_INIT"
+  chmod +x "$XRAY_INIT" 2>/dev/null
+  return 0
+}
+
+kox_install_maintenance_cron() {
+  CRON_LINE='5 4 * * * ulimit -n 65535 2>/dev/null || true; /opt/etc/init.d/S24xray restart >>/opt/var/log/kox-xray-refresh.log 2>&1 # kox-xray-refresh'
+  crontab -l 2>/dev/null | grep -q 'kox-xray-refresh' && return 0
+  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab - 2>/dev/null || \
+    echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+}
 
 # OSC 8 clickable hyperlink (works in iTerm2, VSCode, Kitty, etc.)
 # Uses BEL (0x07) as OSC terminator to avoid \t escape conflicts
@@ -185,7 +226,8 @@ kox_off() {
 
 kox_restart() {
   info "Перезапускаю Xray..."
-  ulimit -n 65535 2>/dev/null || true
+  kox_patch_s24xray 2>/dev/null || true
+  kox_xray_ulimit
   "$XRAY_INIT" restart
   sleep 2
   if pgrep xray >/dev/null 2>&1; then
@@ -1314,12 +1356,18 @@ pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
       warn "Не удалось обновить NAT-скрипт"
   fi
 
-  # S24xray — добавить ulimit если ещё нет (защита от too many open files)
-  if [ -f "$XRAY_INIT" ] && ! grep -q "ulimit" "$XRAY_INIT" 2>/dev/null; then
-    sed -i 's|^\. /opt/etc/init.d/rc.func|ulimit -n 65535 2>/dev/null || true\n. /opt/etc/init.d/rc.func|' "$XRAY_INIT" 2>/dev/null && \
-      ok "S24xray обновлён (добавлен ulimit -n 65535)" || \
-      warn "Не удалось обновить S24xray (добавьте ulimit вручную)"
+  # S24xray — ulimit (BusyBox awk, не sed с \n)
+  if kox_patch_s24xray 2>/dev/null; then
+    if grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
+      ok "S24xray: ulimit -n 65535 (защита от too many open files)"
+    fi
+  elif [ -f "$XRAY_INIT" ] && ! grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
+    warn "Не удалось обновить S24xray — выполните: sed -i '1a ulimit -n 65535 2>/dev/null || true' $XRAY_INIT"
   fi
+
+  kox_install_maintenance_cron 2>/dev/null && \
+    ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
+    warn "Не удалось добавить cron kox-xray-refresh"
 
   [ "$FAIL" -eq 1 ] && return 1
 
@@ -1543,11 +1591,7 @@ kox_switch() {
   # Step 3: restart xray
   info "3/4 — перезапускаю Xray..."
   killall xray 2>/dev/null; sleep 2
-  if [ -x /opt/etc/init.d/S24xray ]; then
-    /opt/etc/init.d/S24xray start >/dev/null 2>&1
-  else
-    /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
-  fi
+  kox_xray_start
   local XRAY_UP=0
   for i in 1 2 3 4 5 6 7 8 9 10; do
     pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && { XRAY_UP=1; break; }
@@ -1580,9 +1624,7 @@ kox_switch() {
   cp /tmp/kox-config-backup.json "$CONF"    2>/dev/null
   cp /tmp/kox-conf-backup        "$KOXCONF" 2>/dev/null
   killall xray 2>/dev/null; sleep 2
-  if [ -x /opt/etc/init.d/S24xray ]; then
-    /opt/etc/init.d/S24xray start >/dev/null 2>&1
-  fi
+  kox_xray_start
   for i in 1 2 3 4 5 6 7 8 9 10; do
     pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 ' && break
     sleep 1
@@ -1704,8 +1746,7 @@ kox_switch_auto() {
 
     # Restart xray
     killall xray 2>/dev/null; sleep 2
-    [ -x /opt/etc/init.d/S24xray ] && /opt/etc/init.d/S24xray start >/dev/null 2>&1 || \
-      /opt/sbin/xray -config "$CONF" >> /opt/var/log/xray-err.log 2>&1 &
+    kox_xray_start
 
     # Wait for xray to come up
     local XRAY_UP=0
