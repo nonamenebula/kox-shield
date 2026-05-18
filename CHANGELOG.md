@@ -1,5 +1,14 @@
 # CHANGELOG — KOX Shield
 
+## 2026.05.18.01
+
+### 🐛 Исправление: повторное падение Xray (`too many open files`)
+
+- **`S24xray` / `kox upgrade`**: патч `ulimit -n 65535` переписан на `awk` — совместим с BusyBox `sed` на Keenetic (старый `sed` с `\n` часто не применялся, из‑за чего автозапуск оставался с лимитом 1024).
+- **`install.sh`**: при существующем `S24xray` без `ulimit` — дописывает строку; в fallback-watchdog и при первом запуске — `ulimit` перед стартом.
+- **`kox-watchdog.sh`**: единые `kox_xray_start` / `kox_xray_restart` с `ulimit` во всех ветках (в т.ч. «порт 10808 не слушает» и автовозврат); метки времени в логе; сохранение хвоста `xray-err.log` в `xray-err.last-crash.log` перед перезапуском; профилактический перезапуск при ≥800 открытых fd.
+- **`kox-cli.sh`**: хелперы `kox_xray_*`, `kox_patch_s24xray`, `kox_install_maintenance_cron`; cron **04:05** — ежедневный `S24xray restart` (сброс дескрипторов); `ulimit` при смене сервера / `switch-auto`.
+
 ## 2026.05.14.04
 
 ### 🐛 Watchdog: автовозврат на основной сервер с кастомным портом

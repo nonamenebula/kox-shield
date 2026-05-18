@@ -190,6 +190,21 @@ INITSCRIPT
     ok "Xray init скрипт создан"
   else
     sed -i 's/^ENABLED=no/ENABLED=yes/' "${INIT}/S24xray" 2>/dev/null || true
+    if ! grep -q 'ulimit.*65535' "${INIT}/S24xray" 2>/dev/null; then
+      awk '
+        BEGIN { inserted=0 }
+        {
+          if (!inserted && $0 ~ /^\. \/opt\/etc\/init\.d\/rc\.func/) {
+            print "ulimit -n 65535 2>/dev/null || true"
+            inserted=1
+          }
+          print
+        }
+        END { if (!inserted) print "ulimit -n 65535 2>/dev/null || true" }
+      ' "${INIT}/S24xray" > /tmp/kox-s24xray.new 2>/dev/null && \
+        mv /tmp/kox-s24xray.new "${INIT}/S24xray" && chmod +x "${INIT}/S24xray"
+      ok "S24xray: добавлен ulimit -n 65535"
+    fi
     ok "Xray init скрипт активирован"
   fi
 
@@ -378,9 +393,8 @@ NATSCRIPT
 KOXCONF="/opt/etc/xray/kox.conf"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
 LOGF="/opt/var/log/kox-watchdog.log"
-TS=$(date '+%Y-%m-%d %H:%M:%S')
 [ -f /tmp/kox-vpn-off ] && exit 0
-log() { printf '%s %s\n' "$TS" "$*" >> "$LOGF"; }
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOGF"; }
 if ! pgrep xray >/dev/null 2>&1; then
   log "Xray не работает — снимаю iptables"
   iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
@@ -389,6 +403,7 @@ if ! pgrep xray >/dev/null 2>&1; then
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  ulimit -n 65535 2>/dev/null || true
   /opt/etc/init.d/S24xray start 2>/dev/null; sleep 5
   if pgrep xray >/dev/null 2>&1; then
     sh "$NAT_SCRIPT" 2>/dev/null; log "Xray перезапущен"
@@ -400,7 +415,7 @@ if ! pgrep xray >/dev/null 2>&1; then
   fi
   exit 0
 fi
-! netstat -ln 2>/dev/null | grep -q ':10808 ' && { killall xray 2>/dev/null; sleep 2; /opt/etc/init.d/S24xray start 2>/dev/null &; }
+! netstat -ln 2>/dev/null | grep -q ':10808 ' && { killall xray 2>/dev/null; sleep 2; ulimit -n 65535 2>/dev/null || true; /opt/etc/init.d/S24xray start 2>/dev/null; }
 ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT && sh "$NAT_SCRIPT" 2>/dev/null
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 300 ] && tail -150 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
 WATCHDOG_FALLBACK
@@ -416,6 +431,14 @@ WATCHDOG_FALLBACK
     ok "Watchdog добавлен в cron (каждую минуту)"
   else
     ok "Watchdog уже в cron"
+  fi
+
+  # Ежедневный перезапуск Xray (сброс fd)
+  CRON_XRAY='5 4 * * * ulimit -n 65535 2>/dev/null || true; /opt/etc/init.d/S24xray restart >>/opt/var/log/kox-xray-refresh.log 2>&1 # kox-xray-refresh'
+  if ! crontab -l 2>/dev/null | grep -q kox-xray-refresh; then
+    (crontab -l 2>/dev/null; echo "$CRON_XRAY") | crontab - 2>/dev/null || \
+      echo "$CRON_XRAY" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+    ok "Cron: ежедневный перезапуск Xray в 04:05"
   fi
 
   # Символические ссылки для geo-данных
@@ -447,6 +470,7 @@ start_xray() {
   info "Запускаю Xray..."
   # Остановить если уже запущен (BusyBox не имеет pkill)
   killall xray 2>/dev/null || true; sleep 1
+  ulimit -n 65535 2>/dev/null || true
   if [ -f "${INIT}/S24xray" ]; then
     "${INIT}/S24xray" start 2>/dev/null || true
   else
