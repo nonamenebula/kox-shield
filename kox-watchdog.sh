@@ -1,10 +1,10 @@
 #!/bin/sh
-# KOX Watchdog v5
-# — перезапускает xray при падении
-# — считает минуты без VPN (порог: KOX_FAILOVER_MINUTES, default 10)
-# — переключается на резервный сервер после N минут
-# — возвращает на основной сервер когда тот появляется (KOX_AUTO_RETURN=yes)
-# — отправляет уведомления в Telegram
+# KOX Watchdog v6
+# — перезапускает xray при падении; при сбое — switch-auto на другой сервер
+# — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 3)
+# — после падения Xray — переключение без ожидания N минут
+# — switch-auto использует кэш серверов если подписка недоступна
+# — возврат на основной сервер (KOX_PREFERRED_HOST + KOX_AUTO_RETURN)
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -16,6 +16,8 @@ VPN_OFF_MARKER="/tmp/kox-vpn-off"
 FAIL_COUNT_FILE="/tmp/kox-vpn-fail-count"
 LAST_SWITCH_FILE="/tmp/kox-last-auto-switch"
 SWITCHING_LOCK="/tmp/kox-autoswitch.lock"
+XRAY_WAS_DOWN="/tmp/kox-wd-xray-was-down"
+XRAY_START_FAIL_FILE="/tmp/kox-xray-start-fail-count"
 XRAY_INIT="/opt/etc/init.d/S24xray"
 
 # Если юзер вручную выключил VPN — не трогать
@@ -54,12 +56,76 @@ kox_save_crash_log() {
 # Загрузить конфиг
 [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
 
-FAILOVER_MINUTES="${KOX_FAILOVER_MINUTES:-10}"
+FAILOVER_MINUTES="${KOX_FAILOVER_MINUTES:-3}"
 AUTO_RETURN="${KOX_AUTO_RETURN:-yes}"
 PREF_HOST="${KOX_PREFERRED_HOST:-}"
 PREF_PORT="${KOX_PREFERRED_PORT:-443}"
 PREF_REMARK="${KOX_PREFERRED_REMARK:-основной сервер}"
 FD_WARN="${KOX_FD_WARN:-800}"
+
+kox_tunnel_ok() {
+  local HTTP
+  HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+    -x socks5h://127.0.0.1:10809 --max-time 6 \
+    "https://api.telegram.org" 2>/dev/null)
+  case "$HTTP" in
+    000|"") return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+kox_watchdog_switch_auto() {
+  local REASON="${1:-сбой VPN}"
+  local CURRENT_HOST NEW_SERVER SWITCH_RC NOW LAST ELAPSED
+
+  CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  NOW=$(cat /proc/uptime 2>/dev/null | cut -d. -f1)
+  LAST=$(cat "$LAST_SWITCH_FILE" 2>/dev/null || echo 0)
+  ELAPSED=$((NOW - LAST))
+  if [ "$ELAPSED" -lt 1800 ] && [ -f "$LAST_SWITCH_FILE" ]; then
+    log "Кулдаун switch-auto (${REASON}): ещё $((1800 - ELAPSED)) сек"
+    return 1
+  fi
+
+  log "switch-auto: ${REASON} (текущий сервер: ${CURRENT_HOST:-?})"
+  touch "$SWITCHING_LOCK"
+  tg_notify "⚠️ <b>KOX Shield — переключаю сервер</b>
+
+Причина: ${REASON}
+Текущий: <code>${CURRENT_HOST:-?}</code>
+Ищу рабочий сервер из подписки..."
+
+  NEW_SERVER=$(/opt/bin/kox switch-auto --quiet 2>/dev/null)
+  SWITCH_RC=$?
+  rm -f "$SWITCHING_LOCK"
+
+  if [ "$SWITCH_RC" = "0" ] && [ -n "$NEW_SERVER" ]; then
+    printf '%s\n' "$NOW" > "$LAST_SWITCH_FILE"
+    printf '0\n' > "$FAIL_COUNT_FILE"
+    printf '0\n' > "$XRAY_START_FAIL_FILE"
+    rm -f "$XRAY_WAS_DOWN"
+    sh "$NAT_SCRIPT" 2>/dev/null
+    log "switch-auto успешно: $NEW_SERVER"
+    RETURN_NOTE=""
+    [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && \
+      RETURN_NOTE="
+
+🔄 Когда основной (<b>${PREF_REMARK}</b>) восстановится — вернусь автоматически."
+    tg_notify "✅ <b>KOX Shield — сервер переключён</b>
+
+Было: <code>${CURRENT_HOST}</code>
+Стало: <b>${NEW_SERVER}</b>
+VPN восстановлен.${RETURN_NOTE}"
+    return 0
+  fi
+
+  log "switch-auto не удался (код $SWITCH_RC)"
+  tg_notify "❌ <b>KOX Shield — не удалось переключить сервер</b>
+
+Причина: ${REASON}
+Проверьте: <code>kox servers</code> или подписку."
+  return 1
+}
 
 # ── Отправить сообщение в Telegram ───────────────────────────────────
 tg_notify() {
@@ -81,6 +147,7 @@ tg_notify() {
 
 # ── 1. Проверяем что xray работает ───────────────────────────────────
 if ! pgrep xray >/dev/null 2>&1; then
+  touch "$XRAY_WAS_DOWN"
   log "Xray не работает — снимаю iptables"
   iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
@@ -95,38 +162,57 @@ if ! pgrep xray >/dev/null 2>&1; then
     if pgrep xray >/dev/null 2>&1; then
       sh "$NAT_SCRIPT" 2>/dev/null
       log "Xray перезапущен, iptables восстановлен"
+      if ! kox_tunnel_ok; then
+        log "Xray запущен, но туннель не отвечает — пробую switch-auto"
+        kox_watchdog_switch_auto "Xray поднялся, туннель мёртв" || true
+      else
+        printf '0\n' > "$XRAY_START_FAIL_FILE"
+        rm -f "$XRAY_WAS_DOWN"
+      fi
     else
-      log "Xray не удалось перезапустить — принудительно очищаю iptables"
-      # Удаляем ОБА правила (TCP + UDP/443), которые могли вернуться через netfilter.d
-      iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
-      iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-      iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-      ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-      ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-      ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-      tg_notify "❌ <b>KOX Shield — Xray не запускается</b>
+      SF=$(cat "$XRAY_START_FAIL_FILE" 2>/dev/null || echo 0)
+      SF=$((SF + 1))
+      printf '%s\n' "$SF" > "$XRAY_START_FAIL_FILE"
+      log "Xray не запустился (попытка ${SF})"
+      if [ "$SF" -ge 2 ]; then
+        kox_watchdog_switch_auto "Xray не запускается на текущем сервере" || true
+      fi
+      if ! pgrep xray >/dev/null 2>&1; then
+        iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+        iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+        iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+        ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+        ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+        ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+        tg_notify "❌ <b>KOX Shield — Xray не запускается</b>
 
-Xray упал и не смог перезапуститься.
-Iptables сняты — интернет работает напрямую (без VPN).
+Перезапуск и смена сервера не помогли.
+Iptables сняты — интернет напрямую.
 
-Проверьте лог: <code>kox log</code>"
+<code>kox log</code> · <code>kox watchdog-log</code>"
+        exit 0
+      fi
     fi
   fi
-  exit 0
 fi
 
 # ── 2. Проверяем порт 10808 ───────────────────────────────────────────
 if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
+  touch "$XRAY_WAS_DOWN"
   log "Xray порт 10808 не слушает — перезапуск"
   kox_xray_restart
   sleep 5
   if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
     sh "$NAT_SCRIPT" 2>/dev/null
     log "Xray перезапущен после сбоя порта 10808"
+    if ! kox_tunnel_ok; then
+      log "Порт 10808 OK, туннель нет — switch-auto"
+      kox_watchdog_switch_auto "порт 10808 без туннеля" || true
+    fi
   else
-    log "Xray не удалось перезапустить (порт 10808)"
+    log "Порт 10808 не восстановился — switch-auto"
+    kox_watchdog_switch_auto "порт 10808 не слушает" || true
   fi
-  exit 0
 fi
 
 # ── 3. Восстановить iptables если пропали ────────────────────────────
@@ -249,77 +335,33 @@ VPN работает в штатном режиме."
 fi
 
 # ── 6. Тест реального VPN-туннеля ─────────────────────────────────────
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  -x socks5h://127.0.0.1:10809 --max-time 6 \
-  "https://api.telegram.org" 2>/dev/null)
+FAST_SWITCH=0
+if [ -f "$XRAY_WAS_DOWN" ]; then
+  FAST_SWITCH=1
+  rm -f "$XRAY_WAS_DOWN"
+fi
 
-case "$HTTP_CODE" in
-  000|"")
-    COUNT=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
-    COUNT=$((COUNT + 1))
-    printf '%s\n' "$COUNT" > "$FAIL_COUNT_FILE"
-    log "VPN-туннель не отвечает (HTTP=000) — счётчик: ${COUNT}/${FAILOVER_MINUTES}"
+if kox_tunnel_ok; then
+  COUNT=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
+  if [ "$COUNT" -gt 0 ]; then
+    log "VPN-туннель восстановился — сброс счётчика"
+    printf '0\n' > "$FAIL_COUNT_FILE"
+  fi
+  printf '0\n' > "$XRAY_START_FAIL_FILE"
+else
+  COUNT=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
+  COUNT=$((COUNT + 1))
+  printf '%s\n' "$COUNT" > "$FAIL_COUNT_FILE"
+  log "VPN-туннель не отвечает — счётчик ${COUNT}/${FAILOVER_MINUTES} (быстрый=${FAST_SWITCH})"
 
-    if [ "$COUNT" -ge "$FAILOVER_MINUTES" ]; then
-      # Кулдаун: не чаще 1 раза в 30 мин
-      NOW=$(cat /proc/uptime 2>/dev/null | cut -d. -f1)
-      LAST=$(cat "$LAST_SWITCH_FILE" 2>/dev/null || echo 0)
-      ELAPSED=$((NOW - LAST))
-      if [ "$ELAPSED" -lt 1800 ]; then
-        log "Кулдаун авто-переключения: ещё $((1800 - ELAPSED)) сек"
-        exit 0
-      fi
-
-      log "${FAILOVER_MINUTES} минут без VPN — запускаю авто-переключение"
-      touch "$SWITCHING_LOCK"
-
-      tg_notify "⚠️ <b>KOX Shield — VPN недоступен ${FAILOVER_MINUTES} мин</b>
-
-Сервер: <code>${CURRENT_HOST}</code>
-Ищу рабочий резервный сервер..."
-
-      NEW_SERVER=$(/opt/bin/kox switch-auto --quiet 2>/dev/null)
-      SWITCH_RC=$?
-      rm -f "$SWITCHING_LOCK"
-
-      if [ "$SWITCH_RC" = "0" ] && [ -n "$NEW_SERVER" ]; then
-        printf '%s\n' "$NOW" > "$LAST_SWITCH_FILE"
-        printf '0\n' > "$FAIL_COUNT_FILE"
-        log "Авто-переключение успешно: $NEW_SERVER"
-
-        RETURN_NOTE=""
-        [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && \
-          RETURN_NOTE="
-
-🔄 Когда основной сервер (<b>${PREF_REMARK}</b>) восстановится — автоматически вернусь на него."
-
-        tg_notify "✅ <b>KOX Shield — переключился на резервный сервер</b>
-
-Предыдущий: <code>${CURRENT_HOST}</code>
-Новый: <b>${NEW_SERVER}</b>
-
-VPN восстановлен.${RETURN_NOTE}"
-      else
-        log "Авто-переключение не удалось — все серверы проверены"
-        tg_notify "❌ <b>KOX Shield — VPN недоступен</b>
-
-Сервер: <code>${CURRENT_HOST}</code>
-Все серверы из подписки проверены — ни один не работает.
-
-Интернет работает напрямую (без VPN).
-Проверьте серверы: /Серверы в боте или <code>kox servers</code>"
-      fi
+  if [ "$FAST_SWITCH" = "1" ] || [ "$COUNT" -ge "$FAILOVER_MINUTES" ]; then
+    if [ "$FAST_SWITCH" = "1" ]; then
+      kox_watchdog_switch_auto "туннель упал после перезапуска Xray"
+    else
+      kox_watchdog_switch_auto "${FAILOVER_MINUTES} мин без VPN"
     fi
-    ;;
-  *)
-    # Туннель работает — сбрасываем счётчик
-    COUNT=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
-    if [ "$COUNT" -gt 0 ]; then
-      log "VPN-туннель восстановился (HTTP ${HTTP_CODE}) — сброс счётчика"
-      printf '0\n' > "$FAIL_COUNT_FILE"
-    fi
-    ;;
-esac
+  fi
+fi
 
 # ── 7. Профилактика: слишком много открытых файловых дескрипторов ─────
 XPID=$(pgrep xray 2>/dev/null | head -1)

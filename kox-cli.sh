@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.18.02"
+KOX_VERSION="2026.05.19.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -74,6 +74,10 @@ kox_upgrade_post() {
   kox_install_maintenance_cron 2>/dev/null && \
     ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
     warn "Не удалось добавить cron kox-xray-refresh"
+  if [ -f "$KOXCONF" ] && ! grep -q '^KOX_FAILOVER_MINUTES=' "$KOXCONF" 2>/dev/null; then
+    printf 'KOX_FAILOVER_MINUTES="3"\n' >> "$KOXCONF"
+    ok "KOX_FAILOVER_MINUTES=3 (быстрое авто-переключение при сбое VPN)"
+  fi
 }
 
 # OSC 8 clickable hyperlink (works in iTerm2, VSCode, Kitty, etc.)
@@ -1434,13 +1438,46 @@ pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
 # Note: REMARK stays URL-encoded in the file. Decoding happens at display
 # time via `printf "%b"` to avoid BusyBox subshell pipe quirks where
 # %b doesn't interpret \xHH inside $() of `while read` loops.
+
+# Заполнить /tmp/kox-auto-servers.txt (только vless:// строки). Сначала подписка, затем кэш.
+kox_populate_auto_servers_file() {
+  local RAW DECODED
+  load_conf
+  if [ -n "${KOX_SUB_URL:-}" ]; then
+    RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
+    [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
+  fi
+  if [ -n "$RAW" ]; then
+    DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+    printf '%s\n' "$DECODED" | grep '^vless://' > /tmp/kox-auto-servers.txt
+    [ -s /tmp/kox-auto-servers.txt ] && return 0
+  fi
+  for cache in /tmp/kox-cli-servers.txt /tmp/kox-servers.txt; do
+    if [ -s "$cache" ]; then
+      cut -f6- "$cache" 2>/dev/null | grep '^vless://' > /tmp/kox-auto-servers.txt
+      [ -s /tmp/kox-auto-servers.txt ] && return 0
+    fi
+  done
+  return 1
+}
+
 _fetch_servers() {
   load_conf
   [ -z "${KOX_SUB_URL:-}" ] && { fail "URL подписки не задан"; info "Используйте: ${W}kox sub set <URL>${N}"; return 1; }
   local RAW DECODED
   RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
   [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && { fail "Не удалось получить подписку"; return 1; }
+  if [ -z "$RAW" ]; then
+    for cache in /tmp/kox-cli-servers.txt /tmp/kox-servers.txt; do
+      if [ -s "$cache" ]; then
+        warn "Подписка недоступна — список из кэша ($cache)"
+        cat "$cache"
+        return 0
+      fi
+    done
+    fail "Не удалось получить подписку"
+    return 1
+  fi
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
   local IDX=0
   printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
@@ -1649,23 +1686,25 @@ kox_switch() {
 kox_switch_auto() {
   local QUIET="${1:-}"
   load_conf
-  [ -z "${KOX_SUB_URL:-}" ] && { fail "KOX_SUB_URL не задан"; return 1; }
+  [ -z "${KOX_SUB_URL:-}" ] && [ ! -s /tmp/kox-cli-servers.txt ] && [ ! -s /tmp/kox-servers.txt ] && {
+    fail "KOX_SUB_URL не задан и нет кэша серверов (выполните kox servers)"
+    return 1
+  }
 
   [ "$QUIET" != "--quiet" ] && { sep; info "${W}Авто-переключение на резервный сервер...${N}"; sep; }
 
-  # Fetch subscription
-  local RAW DECODED
-  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && { fail "Не удалось получить подписку"; return 1; }
-  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+  if ! kox_populate_auto_servers_file; then
+    fail "Не удалось получить список серверов (подписка и кэш недоступны)"
+    return 1
+  fi
+  if [ ! -s /tmp/kox-cli-servers.txt ] && [ -s /tmp/kox-auto-servers.txt ]; then
+    cp /tmp/kox-auto-servers.txt /tmp/kox-servers.txt 2>/dev/null || true
+  fi
 
   # Current active server — skip it (it's presumably broken)
   local CURRENT_HOST
   CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
 
-  # Save server list to temp file for iteration
-  printf '%s\n' "$DECODED" | grep '^vless://' > /tmp/kox-auto-servers.txt
   local TOTAL
   TOTAL=$(wc -l < /tmp/kox-auto-servers.txt | tr -d ' ')
   [ "$TOTAL" -eq 0 ] && { fail "Серверов в подписке нет"; return 1; }
