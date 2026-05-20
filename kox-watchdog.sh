@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX Watchdog v6
+# KOX Watchdog v7
 # — перезапускает xray при падении; при сбое — switch-auto на другой сервер
 # — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 3)
 # — после падения Xray — переключение без ожидания N минут
@@ -11,6 +11,7 @@ CONF="/opt/etc/xray/config.json"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
 LOGF="/opt/var/log/kox-watchdog.log"
 ERRLOG="/opt/var/log/xray-err.log"
+ACCLOG="/opt/var/log/xray-acc.log"
 CRASHLOG="/opt/var/log/xray-err.last-crash.log"
 VPN_OFF_MARKER="/tmp/kox-vpn-off"
 FAIL_COUNT_FILE="/tmp/kox-vpn-fail-count"
@@ -62,6 +63,17 @@ PREF_HOST="${KOX_PREFERRED_HOST:-}"
 PREF_PORT="${KOX_PREFERRED_PORT:-443}"
 PREF_REMARK="${KOX_PREFERRED_REMARK:-основной сервер}"
 FD_WARN="${KOX_FD_WARN:-800}"
+ACC_STALE_MINUTES="${KOX_ACC_STALE_MINUTES:-5}"
+
+kox_acc_log_stale() {
+  [ -f "$ACCLOG" ] || return 1
+  local NOW MTIME AGE
+  NOW=$(date +%s 2>/dev/null) || return 1
+  MTIME=$(stat -c %Y "$ACCLOG" 2>/dev/null)
+  [ -z "$MTIME" ] && return 1
+  AGE=$((NOW - MTIME))
+  [ "$AGE" -ge $((ACC_STALE_MINUTES * 60)) ]
+}
 
 kox_tunnel_ok() {
   local HTTP
@@ -212,6 +224,30 @@ if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
   else
     log "Порт 10808 не восстановился — switch-auto"
     kox_watchdog_switch_auto "порт 10808 не слушает" || true
+  fi
+fi
+
+# ── 2b. Зависший Xray: процесс есть, но access-лог не пишется ─────────
+if pgrep xray >/dev/null 2>&1 && \
+   iptables -t nat -L PREROUTING 2>/dev/null | grep -q XRAY_REDIRECT && \
+   kox_acc_log_stale; then
+  STALE_SEC=$(( $(date +%s 2>/dev/null || echo 0) - $(stat -c %Y "$ACCLOG" 2>/dev/null || echo 0) ))
+  log "Access-лог молчит ${STALE_SEC}s при активном VPN — Xray завис, перезапуск"
+  touch "$XRAY_WAS_DOWN"
+  tg_notify "⚠️ <b>KOX Shield — Xray завис</b>
+
+Трафик через VPN не идёт (~${STALE_SEC} сек без записей в логе).
+Перезапускаю Xray..."
+  kox_xray_restart
+  sleep 5
+  sh "$NAT_SCRIPT" 2>/dev/null
+  if kox_acc_log_stale; then
+    log "После перезапуска access-лог всё ещё молчит — switch-auto"
+    kox_watchdog_switch_auto "Xray завис (access-лог)" || true
+  else
+    log "Xray восстановлен после зависания (access-лог ожил)"
+    rm -f "$XRAY_WAS_DOWN"
+    printf '0\n' > "$FAIL_COUNT_FILE"
   fi
 fi
 
