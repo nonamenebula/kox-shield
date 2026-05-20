@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.19.01"
+KOX_VERSION="2026.05.20.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -64,6 +64,37 @@ kox_install_maintenance_cron() {
     echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
 }
 
+kox_ensure_crond() {
+  CRON_INIT="/opt/etc/init.d/S10cron"
+  if [ -f "$CRON_INIT" ] && ! head -1 "$CRON_INIT" 2>/dev/null | grep -q '^#!/bin/sh'; then
+    warn "S10cron повреждён — восстанавливаю init-скрипт"
+    cat > "$CRON_INIT" << 'CRONINIT'
+#!/bin/sh
+ENABLED=yes
+PROCS=crond
+ARGS="-c /opt/var/spool/cron/crontabs -l 2 -L /opt/var/log/crond.log"
+PREARGS=""
+DESC=crond
+PATH=/opt/sbin:/opt/bin:/sbin:/bin:/usr/sbin:/usr/bin
+. /opt/etc/init.d/rc.func
+CRONINIT
+    chmod +x "$CRON_INIT"
+  fi
+  if ! pgrep crond >/dev/null 2>&1; then
+    [ -x "$CRON_INIT" ] && "$CRON_INIT" start 2>/dev/null
+    if ! pgrep crond >/dev/null 2>&1 && [ -x /opt/sbin/crond ]; then
+      /opt/sbin/crond -c /opt/var/spool/cron/crontabs -l 2 -L /opt/var/log/crond.log 2>/dev/null &
+      sleep 1
+    fi
+  fi
+  if pgrep crond >/dev/null 2>&1; then
+    ok "Cron (crond) запущен — watchdog каждую минуту"
+    return 0
+  fi
+  warn "crond не запущен — авто-watchdog и cron-задачи не работают"
+  return 1
+}
+
 kox_upgrade_post() {
   kox_patch_s24xray 2>/dev/null
   if grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
@@ -71,6 +102,7 @@ kox_upgrade_post() {
   elif [ -f "$XRAY_INIT" ]; then
     warn "Не удалось пропатчить S24xray — добавьте ulimit вручную"
   fi
+  kox_ensure_crond 2>/dev/null
   kox_install_maintenance_cron 2>/dev/null && \
     ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
     warn "Не удалось добавить cron kox-xray-refresh"
