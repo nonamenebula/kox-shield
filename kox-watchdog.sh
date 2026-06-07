@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX Watchdog v7
+# KOX Watchdog v8
 # — перезапускает xray при падении; при сбое — switch-auto на другой сервер
 # — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 3)
 # — после падения Xray — переключение без ожидания N минут
@@ -20,6 +20,12 @@ SWITCHING_LOCK="/tmp/kox-autoswitch.lock"
 XRAY_WAS_DOWN="/tmp/kox-wd-xray-was-down"
 XRAY_START_FAIL_FILE="/tmp/kox-xray-start-fail-count"
 XRAY_INIT="/opt/etc/init.d/S24xray"
+HYSTERIA_BIN="/opt/sbin/hysteria"
+HYSTERIA_CONF="/opt/etc/hysteria/client.yaml"
+HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
+HYSTERIA_SOCKS_PORT="11888"
+PROXY_TAG="kox-proxy"
+KOX_URI_GREP='^(vless|hysteria2|hy2)://'
 
 # Если юзер вручную выключил VPN — не трогать
 [ -f "$VPN_OFF_MARKER" ] && exit 0
@@ -52,6 +58,74 @@ kox_save_crash_log() {
   [ -s "$ERRLOG" ] || return 0
   printf '\n--- %s watchdog ---\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$CRASHLOG"
   tail -25 "$ERRLOG" >> "$CRASHLOG" 2>/dev/null
+}
+
+# ── Protocol-agnostic URI helpers (mirrors kox-cli.sh) ────────────────
+uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
+uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
+uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
+uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
+uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
+uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
+
+wd_conf_set() {
+  K="$1"; V="$2"
+  if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
+  else
+    printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
+  fi
+}
+
+wd_hysteria_write_conf() {
+  URI="$1"
+  H_AUTH=$(uri_userinfo "$URI"); H_HOST=$(uri_host "$URI")
+  H_PORT=$(uri_port "$URI"); [ -z "$H_PORT" ] && H_PORT=443
+  H_SNI=$(uri_qparam "$URI" sni); H_OBFS=$(uri_qparam "$URI" obfs)
+  H_OBFSP=$(uri_qparam "$URI" obfs-password); H_INSEC=$(uri_qparam "$URI" insecure)
+  mkdir -p "$(dirname "$HYSTERIA_CONF")"
+  {
+    printf 'server: %s:%s\n' "$H_HOST" "$H_PORT"
+    printf 'auth: %s\n' "$H_AUTH"
+    printf 'tls:\n'
+    [ -n "$H_SNI" ] && printf '  sni: %s\n' "$H_SNI"
+    { [ "$H_INSEC" = "1" ] || [ "$H_INSEC" = "true" ]; } && printf '  insecure: true\n'
+    [ -n "$H_OBFS" ] && printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$H_OBFS" "$H_OBFS" "$H_OBFSP"
+    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
+    printf 'fastOpen: true\n'
+  } > "$HYSTERIA_CONF"
+}
+
+wd_hysteria_start() {
+  if [ -x "$HYSTERIA_INIT" ]; then "$HYSTERIA_INIT" restart >/dev/null 2>&1
+  else killall hysteria 2>/dev/null; sleep 1; "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 & fi
+}
+wd_hysteria_stop() { [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" stop >/dev/null 2>&1; killall hysteria 2>/dev/null; }
+
+wd_proxy_set_socks() {
+  TMP=/tmp/kox-wd-socks.json
+  jq --argjson port "$HYSTERIA_SOCKS_PORT" --arg tag "$PROXY_TAG" '
+    .outbounds = [.outbounds[] | if .tag == $tag then
+      {tag: $tag, protocol: "socks", settings: {servers: [{address: "127.0.0.1", port: ($port|tonumber)}]}}
+      else . end ]' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && jq -e . "$TMP" >/dev/null 2>&1 && mv "$TMP" "$CONF" || { rm -f "$TMP"; return 1; }
+}
+
+wd_proxy_set_vless() {
+  P_ADDR="$1"; P_PORT="$2"; P_UUID="$3"; P_FLOW="$4"; P_SNI="$5"; P_PBK="$6"; P_SID="$7"; P_FP="$8"; P_SPX="$9"
+  TMP=/tmp/kox-wd-vless.json
+  jq --arg tag "$PROXY_TAG" --arg addr "$P_ADDR" --argjson port "${P_PORT:-443}" \
+     --arg uuid "$P_UUID" --arg flow "$P_FLOW" --arg sni "${P_SNI:-www.google.com}" \
+     --arg pbk "$P_PBK" --arg sid "$P_SID" --arg fp "${P_FP:-chrome}" --arg spx "${P_SPX:-/}" '
+    .outbounds = [.outbounds[] | if .tag == $tag then
+      {tag: $tag, protocol: "vless",
+       settings: {vnext: [{address: $addr, port: ($port|tonumber),
+         users: [{id: $uuid, encryption: "none", flow: $flow}]}]},
+       streamSettings: {network: "tcp", security: "reality",
+         realitySettings: {show: false, serverName: $sni, publicKey: $pbk,
+           shortId: $sid, fingerprint: $fp, spiderX: $spx}}}
+      else . end ]' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && jq -e . "$TMP" >/dev/null 2>&1 && mv "$TMP" "$CONF" || { rm -f "$TMP"; return 1; }
 }
 
 # Загрузить конфиг
@@ -90,7 +164,8 @@ kox_watchdog_switch_auto() {
   local REASON="${1:-сбой VPN}"
   local CURRENT_HOST NEW_SERVER SWITCH_RC NOW LAST ELAPSED
 
-  CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  CURRENT_HOST="${KOX_SERVER:-}"
+  [ -z "$CURRENT_HOST" ] && CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   NOW=$(cat /proc/uptime 2>/dev/null | cut -d. -f1)
   LAST=$(cat "$LAST_SWITCH_FILE" 2>/dev/null || echo 0)
   ELAPSED=$((NOW - LAST))
@@ -258,7 +333,8 @@ if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
 fi
 
 # ── 4. Получить текущий сервер ────────────────────────────────────────
-CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+CURRENT_HOST="${KOX_SERVER:-}"
+[ -z "$CURRENT_HOST" ] && CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
 
 # ── 5. Проверка автовозврата на основной сервер ───────────────────────
 # Выполняем ПЕРЕД тестом туннеля чтобы работало даже когда резервный работает
@@ -282,47 +358,47 @@ if [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$P
       [ -z "${KOX_SUB_URL:-}" ] && return 1
       RAW=$(curl -fsSL --max-time 10 "$KOX_SUB_URL" 2>/dev/null)
       DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-      VLINE=$(printf '%s\n' "$DECODED" | grep "^vless://" | grep "@${PREF_HOST}:" | head -1)
+      # Match the preferred host across vless:// and hysteria2://|hy2://
+      VLINE=$(printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | grep "@${PREF_HOST}:" | head -1)
       [ -z "$VLINE" ] && return 1
 
-      UUID=$(printf '%s' "$VLINE" | sed 's|vless://\([^@]*\)@.*|\1|')
-      PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
-      PARAMS=$(printf '%s' "$VLINE" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
-      SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
-      FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-      PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
-      SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
-      FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
-      SPX=$(printf '%s'  "$PARAMS" | grep -o 'spx=[^&]*'  | cut -d= -f2 | sed 's/%2[Ff]/\//g')
-      [ -z "$SPX" ] && SPX="/"
-      P="${PORT:-443}"
+      PROTO=$(uri_proto "$VLINE")
+      PORT=$(uri_port "$VLINE"); P="${PORT:-443}"
 
       cp "$CONF" /tmp/kox-wd-backup.json 2>/dev/null
+      cp "$KOXCONF" /tmp/kox-wd-conf-backup 2>/dev/null
 
-      jq --arg addr "$PREF_HOST" --argjson port "$P" \
-         --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
-         --arg flow "$FLOW" --arg pbkey "$PBKEY" \
-         --arg sid "$SID" --arg fp "${FP:-chrome}" --arg spx "$SPX" '
-        .outbounds = [.outbounds[] |
-          if .protocol == "vless" then
-            .settings.vnext[0].address = $addr |
-            .settings.vnext[0].port = ($port | tonumber) |
-            .settings.vnext[0].users[0].id = $uuid |
-            .settings.vnext[0].users[0].flow = $flow |
-            .streamSettings.realitySettings.serverName = $sni |
-            (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
-            (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
-            (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
-            .streamSettings.realitySettings.spiderX = $spx
-          else . end
-        ]
-      ' "$CONF" > /tmp/kox-wd-new.json 2>/dev/null
-      [ -s /tmp/kox-wd-new.json ] && mv /tmp/kox-wd-new.json "$CONF" || return 1
-
-      # Update kox.conf
-      sed -i "s|^KOX_SERVER=.*|KOX_SERVER=\"${PREF_HOST}\"|" "$KOXCONF" 2>/dev/null
-      sed -i "s|^KOX_PORT=.*|KOX_PORT=\"${P}\"|" "$KOXCONF" 2>/dev/null
-      sed -i "s|^KOX_UUID=.*|KOX_UUID=\"${UUID}\"|" "$KOXCONF" 2>/dev/null
+      if [ "$PROTO" = "hysteria2" ]; then
+        AUTH=$(uri_userinfo "$VLINE"); SNI=$(uri_qparam "$VLINE" sni)
+        wd_hysteria_write_conf "$VLINE"
+        # Set KOX_PROTO BEFORE start — S25hysteria gates on it.
+        wd_conf_set KOX_PROTO hysteria2
+        wd_hysteria_start
+        wd_proxy_set_socks || return 1
+        wd_conf_set KOX_SERVER "$PREF_HOST"
+        wd_conf_set KOX_PORT "$P"
+        wd_conf_set KOX_UUID "$AUTH"
+        [ -n "$SNI" ] && wd_conf_set KOX_SNI "$SNI"
+        wd_conf_set KOX_FLOW ""
+      else
+        UUID=$(uri_userinfo "$VLINE")
+        PARAMS=$(printf '%s' "$VLINE" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
+        SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
+        FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+        PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
+        SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
+        FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
+        SPX=$(printf '%s'  "$PARAMS" | grep -o 'spx=[^&]*'  | cut -d= -f2 | sed 's/%2[Ff]/\//g')
+        [ -z "$SPX" ] && SPX="/"
+        wd_hysteria_stop
+        wd_proxy_set_vless "$PREF_HOST" "$P" "$UUID" "$FLOW" "${SNI:-www.google.com}" "$PBKEY" "$SID" "${FP:-chrome}" "$SPX" || return 1
+        wd_conf_set KOX_PROTO vless
+        wd_conf_set KOX_SERVER "$PREF_HOST"
+        wd_conf_set KOX_PORT "$P"
+        wd_conf_set KOX_UUID "$UUID"
+        wd_conf_set KOX_SNI "${SNI:-www.google.com}"
+        wd_conf_set KOX_FLOW "$FLOW"
+      fi
 
       kox_xray_restart
 
@@ -338,8 +414,11 @@ if [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && [ "$CURRENT_HOST" != "$P
           -x socks5h://127.0.0.1:10809 --max-time 5 "https://api.telegram.org" 2>/dev/null)
         case "$HTTP" in 000|"") sleep 1 ;; *) echo "$HTTP"; return 0 ;; esac
       done
-      # Tunnel failed — restore
+      # Tunnel failed — restore config + kox.conf + hysteria state
       cp /tmp/kox-wd-backup.json "$CONF" 2>/dev/null
+      cp /tmp/kox-wd-conf-backup "$KOXCONF" 2>/dev/null
+      PREV_PROTO=$(grep -m1 '^KOX_PROTO=' "$KOXCONF" 2>/dev/null | cut -d'"' -f2)
+      if [ "$PREV_PROTO" = "hysteria2" ]; then wd_hysteria_start; else wd_hysteria_stop; fi
       kox_xray_start
       return 1
     }

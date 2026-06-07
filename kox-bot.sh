@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.05.20.01"
+KOX_VERSION="2026.06.07.01"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -29,6 +29,89 @@ CHECK_INTERVAL=21600  # 6 hours
 
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
+
+# ── Hysteria2 / protocol-agnostic support (mirrors kox-cli.sh) ──────────────────
+HYSTERIA_BIN="/opt/sbin/hysteria"
+HYSTERIA_CONF="/opt/etc/hysteria/client.yaml"
+HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
+HYSTERIA_SOCKS_PORT="11888"
+PROXY_TAG="kox-proxy"
+# Match both vless:// and hysteria2://|hy2:// at line start
+KOX_URI_GREP='^(vless|hysteria2|hy2)://'
+
+uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
+uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
+uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
+uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
+uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
+uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
+
+bot_hysteria_write_conf() {
+  URI="$1"
+  H_AUTH=$(uri_userinfo "$URI"); H_HOST=$(uri_host "$URI")
+  H_PORT=$(uri_port "$URI"); [ -z "$H_PORT" ] && H_PORT=443
+  H_SNI=$(uri_qparam "$URI" sni); H_OBFS=$(uri_qparam "$URI" obfs)
+  H_OBFSP=$(uri_qparam "$URI" obfs-password); H_INSEC=$(uri_qparam "$URI" insecure)
+  mkdir -p "$(dirname "$HYSTERIA_CONF")"
+  {
+    printf 'server: %s:%s\n' "$H_HOST" "$H_PORT"
+    printf 'auth: %s\n' "$H_AUTH"
+    printf 'tls:\n'
+    [ -n "$H_SNI" ] && printf '  sni: %s\n' "$H_SNI"
+    { [ "$H_INSEC" = "1" ] || [ "$H_INSEC" = "true" ]; } && printf '  insecure: true\n'
+    if [ -n "$H_OBFS" ]; then
+      printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$H_OBFS" "$H_OBFS" "$H_OBFSP"
+    fi
+    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
+    printf 'fastOpen: true\n'
+  } > "$HYSTERIA_CONF"
+}
+
+bot_hysteria_start() {
+  if [ -x "$HYSTERIA_INIT" ]; then
+    "$HYSTERIA_INIT" restart >/dev/null 2>&1
+  else
+    killall hysteria 2>/dev/null; sleep 1
+    "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 &
+  fi
+}
+
+bot_hysteria_stop() {
+  [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" stop >/dev/null 2>&1
+  killall hysteria 2>/dev/null
+}
+
+bot_proxy_set_socks() {
+  TMP=/tmp/kox-proxy-socks.json
+  jq --argjson port "$HYSTERIA_SOCKS_PORT" --arg tag "$PROXY_TAG" '
+    .outbounds = [.outbounds[] |
+      if .tag == $tag then
+        {tag: $tag, protocol: "socks",
+         settings: {servers: [{address: "127.0.0.1", port: ($port|tonumber)}]}}
+      else . end ]
+  ' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && jq -e . "$TMP" >/dev/null 2>&1 && mv "$TMP" "$CONF" || { rm -f "$TMP"; return 1; }
+}
+
+bot_proxy_set_vless() {
+  P_ADDR="$1"; P_PORT="$2"; P_UUID="$3"; P_FLOW="$4"; P_SNI="$5"
+  P_PBK="$6"; P_SID="$7"; P_FP="$8"; P_SPX="$9"
+  TMP=/tmp/kox-proxy-vless.json
+  jq --arg tag "$PROXY_TAG" --arg addr "$P_ADDR" --argjson port "${P_PORT:-443}" \
+     --arg uuid "$P_UUID" --arg flow "$P_FLOW" --arg sni "${P_SNI:-www.google.com}" \
+     --arg pbk "$P_PBK" --arg sid "$P_SID" --arg fp "${P_FP:-chrome}" --arg spx "${P_SPX:-/}" '
+    .outbounds = [.outbounds[] |
+      if .tag == $tag then
+        {tag: $tag, protocol: "vless",
+         settings: {vnext: [{address: $addr, port: ($port|tonumber),
+           users: [{id: $uuid, encryption: "none", flow: $flow}]}]},
+         streamSettings: {network: "tcp", security: "reality",
+           realitySettings: {show: false, serverName: $sni, publicKey: $pbk,
+             shortId: $sid, fingerprint: $fp, spiderX: $spx}}}
+      else . end ]
+  ' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && jq -e . "$TMP" >/dev/null 2>&1 && mv "$TMP" "$CONF" || { rm -f "$TMP"; return 1; }
+}
 
 # ── Lock ──────────────────────────────────────────────────────────────────────
 if [ -f "$LOCK_FILE" ]; then
@@ -319,8 +402,8 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
 
   local SERVERS
-  # Each line in the decoded subscription is a full vless:// URL
-  SERVERS=$(printf '%s' "$DECODED" | grep 'vless://')
+  # Each line is a full vless:// (Reality) or hysteria2://|hy2:// (QUIC) URL
+  SERVERS=$(printf '%s' "$DECODED" | grep -E "$KOX_URI_GREP")
   if [ -z "$SERVERS" ]; then
     update_menu "$CHAT" "❌ Серверы не найдены в подписке." "$(back_keyboard)"
     return
@@ -335,8 +418,8 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
   printf '%s\n' "$SERVERS" | while IFS= read -r VLINE; do
     [ -z "$VLINE" ] && continue
     local HOST PORT REMARK ENCODED_REMARK
-    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
-    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    HOST=$(uri_host "$VLINE")
+    PORT=$(uri_port "$VLINE"); [ -z "$PORT" ] && PORT=443
     # Extract remark: everything after last '#' (avoid BusyBox grep \t\r\n issues)
     ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
     REMARK=$(urldecode "$ENCODED_REMARK")
@@ -422,34 +505,36 @@ h_do_switch() {
   REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
-  # Check if already connected to this server
+  # Active protocol of the selected server (vless | hysteria2)
+  local SEL_PROTO
+  SEL_PROTO=$(uri_proto "$VLESS_URL")
+
+  # Check if already connected to this server (compare vs kox.conf KOX_SERVER,
+  # because in hysteria mode config.json holds 127.0.0.1, not the real host).
   local CURRENT_SRV
-  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  CURRENT_SRV=$(grep -m1 '^KOX_SERVER=' "$KOXCONF" 2>/dev/null | cut -d'"' -f2)
+  [ -z "$CURRENT_SRV" ] && CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   if [ "$HOST" = "$CURRENT_SRV" ]; then
     [ -n "$CB_ID" ] && api_call "answerCallbackQuery" \
       "{\"callback_query_id\":\"${CB_ID}\",\"text\":\"✅ Уже подключено к этому серверу\"}" >/dev/null 2>&1
     return
   fi
 
-  # Parse VLESS URL for config fields
+  # Parse VLESS fields (only meaningful for vless; hysteria parsed inside helper)
   local UUID PARAMS SNI FLOW PBKEY SID FP SPX
-  UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
+  UUID=$(uri_userinfo "$VLESS_URL")
   PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
   SNI=$(printf '%s' "$PARAMS"  | grep -o 'sni=[^&]*'  | cut -d= -f2)
   # IMPORTANT: flow may be ABSENT (server doesn't use Vision wrapper).
-  # We must NOT default to xtls-rprx-vision — that would break servers
-  # that have a plain VLESS user. Empty string == no flow.
   FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-  # 3x-ui uses 'pbk=' (not 'pbkey=') for the Reality public key
   PBKEY=$(printf '%s' "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
   SID=$(printf '%s' "$PARAMS"   | grep -o 'sid=[^&]*'  | cut -d= -f2)
   FP=$(printf '%s' "$PARAMS"    | grep -o 'fp=[^&]*'   | cut -d= -f2)
-  # spiderX is per-server; URL-decode the leading %2F → /
   SPX=$(printf '%s' "$PARAMS"   | grep -o 'spx=[^&]*'  | cut -d= -f2)
   SPX=$(urldecode "${SPX:-/}")
 
-  if [ -z "$UUID" ] || [ -z "$HOST" ]; then
-    update_menu "$CHAT" "❌ Не удалось разобрать VLESS URL для сервера #${IDX}" "$(back_keyboard)"
+  if [ -z "$HOST" ] || { [ "$SEL_PROTO" = "vless" ] && [ -z "$UUID" ]; }; then
+    update_menu "$CHAT" "❌ Не удалось разобрать ссылку сервера #${IDX}" "$(back_keyboard)"
     return
   fi
 
@@ -466,16 +551,17 @@ h_do_switch() {
   # NOTE: BusyBox `nc` has no -w/-z flags and `timeout` is missing — we use curl,
   # which has --connect-timeout and reliably returns exit 0 only on full TLS connect.
   PRE_OK=0
-  for i in 1 2 3; do
-    if curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
-         "https://${HOST}:${PORT:-443}/" 2>/dev/null; then
-      PRE_OK=1; break
-    fi
-    sleep 1
-  done
-  # Even Reality servers reject with "self-signed cert" or similar — but curl
-  # exits 0 on any TLS handshake completion. If everything fails, fall back
-  # to a plain ICMP check (host alive at least).
+  if [ "$SEL_PROTO" = "vless" ]; then
+    for i in 1 2 3; do
+      if curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
+           "https://${HOST}:${PORT:-443}/" 2>/dev/null; then
+        PRE_OK=1; break
+      fi
+      sleep 1
+    done
+  fi
+  # Hysteria is UDP/QUIC (no TLS-over-TCP) — and as a fallback for vless,
+  # verify the host is at least alive via ICMP.
   if [ "$PRE_OK" = "0" ]; then
     ping -c 1 -W 2 "$HOST" >/dev/null 2>&1 && PRE_OK=1
   fi
@@ -506,40 +592,29 @@ h_do_switch() {
   cp "$CONF" /tmp/kox-config-backup.json 2>/dev/null
   cp "$KOXCONF" /tmp/kox-conf-backup 2>/dev/null
 
-  # ── Step 1: build new config.json via jq ─────────────────────────────
-  # CRITICAL: run jq BEFORE touching kox.conf so a jq failure leaves both
-  # files consistent (still pointing at the old server).
-  # Update config.json via jq (preserves inbounds; updates all Reality fields).
-  # CRITICAL: $flow is set to whatever the URL says — empty string if missing.
-  # For Reality servers without Vision flow, the server's user config has no
-  # flow and our outbound MUST also have no flow (or empty), or handshake fails.
-  local TMP_CONF=/tmp/kox-switch-tmp.json
-  local P="${PORT:-443}"
-  jq --arg addr "$HOST" --argjson port "$P" \
-     --arg uuid "$UUID" \
-     --arg sni  "${SNI:-www.google.com}" \
-     --arg flow "$FLOW" \
-     --arg pbkey "${PBKEY}" \
-     --arg sid  "${SID}" \
-     --arg fp   "${FP:-chrome}" \
-     --arg spx  "${SPX:-/}" '
-    .outbounds = [.outbounds[] |
-      if .protocol == "vless" then
-        .settings.vnext[0].address = $addr |
-        .settings.vnext[0].port = ($port | tonumber) |
-        .settings.vnext[0].users[0].id = $uuid |
-        .settings.vnext[0].users[0].flow = $flow |
-        .streamSettings.realitySettings.serverName = $sni |
-        (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
-        (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
-        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
-        .streamSettings.realitySettings.spiderX = $spx
-      else . end
-    ]
-  ' "$CONF" > "$TMP_CONF" 2>/dev/null
+  # ── Step 1: rebuild the kox-proxy outbound (by tag) for the new protocol ──
+  # CRITICAL: rebuild config.json BEFORE touching kox.conf so a failure leaves
+  # both files consistent (still pointing at the old server). The transparent
+  # inbounds + routing rules are preserved (we only swap the kox-proxy outbound).
+  local APPLY_OK=1
+  if [ "$SEL_PROTO" = "hysteria2" ]; then
+    # Hysteria: write client.yaml, start local socks, point kox-proxy at it.
+    # Set KOX_PROTO BEFORE start — S25hysteria init gates on it.
+    bot_hysteria_write_conf "$VLESS_URL"
+    conf_set KOX_PROTO hysteria2
+    bot_hysteria_start
+    bot_proxy_set_socks || APPLY_OK=0
+  else
+    # VLESS/Reality: native outbound; stop any running hysteria client.
+    bot_hysteria_stop
+    bot_proxy_set_vless "$HOST" "${PORT:-443}" "$UUID" "$FLOW" \
+      "${SNI:-www.google.com}" "$PBKEY" "$SID" "${FP:-chrome}" "${SPX:-/}" || APPLY_OK=0
+  fi
 
-  if ! [ -s "$TMP_CONF" ] || ! jq -e . "$TMP_CONF" >/dev/null 2>&1; then
-    rm -f "$TMP_CONF"
+  if [ "$APPLY_OK" = "0" ] || ! jq -e . "$CONF" >/dev/null 2>&1; then
+    # Roll back config + kox.conf to the known-good backup.
+    cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
+    cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
     update_menu "$CHAT" "❌ <b>Ошибка генерации конфига (jq)</b>
 
 Переключение отменено — текущий сервер не изменён.
@@ -548,18 +623,16 @@ h_do_switch() {
     return
   fi
 
-  # ── Step 2: NOW update kox.conf (jq already succeeded) ───────────────
+  # ── Step 2: NOW update kox.conf (config.json already rebuilt) ─────────
   # note: FLOW may be EMPTY (don't default it!)
+  conf_set KOX_PROTO "$SEL_PROTO"
   conf_set KOX_SERVER "$HOST"
   conf_set KOX_PORT "${PORT:-443}"
   conf_set KOX_UUID "$UUID"
   conf_set KOX_SNI "${SNI:-www.google.com}"
   conf_set KOX_FLOW "$FLOW"
 
-  # ── Step 3: atomically replace config.json ────────────────────────────
-  mv "$TMP_CONF" "$CONF"
-
-  # Restart xray (do stop/start manually to control timing).
+  # ── Step 3: restart xray (kox-proxy front-end). ───────────────────────
   # NOTE: BusyBox on Keenetic does NOT have pkill, only killall/pidof/kill.
   killall xray 2>/dev/null
   sleep 2
@@ -609,14 +682,15 @@ h_do_switch() {
   fi
 
   if [ "$TUNNEL_OK" = "1" ]; then
+    local PROTO_LABEL="VLESS-Reality"
+    [ "$SEL_PROTO" = "hysteria2" ] && PROTO_LABEL="Hysteria2"
     update_menu "$CHAT" "✅ <b>Переключено на сервер!</b>
 
 <b>${REMARK}</b>
+Протокол: <code>${PROTO_LABEL}</code>
 Адрес: <code>${HOST}</code>
 Порт:  <code>${PORT:-443}</code>
-UUID:  <code>${UUID}</code>
-SNI:   <code>${SNI:-www.google.com}</code>
-Flow:  <code>${FLOW:-—}</code>
+SNI:   <code>${SNI:-—}</code>
 
 ✓ Сервер доступен
 ✓ Xray запущен
@@ -639,6 +713,13 @@ Flow:  <code>${FLOW:-—}</code>
 
     cp /tmp/kox-config-backup.json "$CONF" 2>/dev/null
     cp /tmp/kox-conf-backup "$KOXCONF" 2>/dev/null
+    # Restore hysteria client state to match the rolled-back config.
+    PREV_PROTO=$(grep -m1 '^KOX_PROTO=' "$KOXCONF" 2>/dev/null | cut -d'"' -f2)
+    if [ "$PREV_PROTO" = "hysteria2" ]; then
+      bot_hysteria_start
+    else
+      bot_hysteria_stop
+    fi
     killall xray 2>/dev/null; sleep 2
     if [ -x "$XRAY_INIT" ]; then
       "$XRAY_INIT" start >/dev/null 2>&1
@@ -1384,10 +1465,10 @@ h_pref_pick_list() {
   local PREF_HOST="${KOX_PREFERRED_HOST:-}"
   printf '' > /tmp/kox-pref-servers.txt
   local IDX=0
-  printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
+  printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | while IFS= read -r VLINE; do
     local HOST PORT ENC_REMARK
-    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
-    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    HOST=$(uri_host "$VLINE")
+    PORT=$(uri_port "$VLINE"); [ -z "$PORT" ] && PORT=443
     ENC_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
     printf '%s\t%s\t%s\t%s\n' "$IDX" "$HOST" "$PORT" "$ENC_REMARK" >> /tmp/kox-pref-servers.txt
     IDX=$((IDX+1))

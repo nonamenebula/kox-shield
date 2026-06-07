@@ -1,5 +1,34 @@
 # CHANGELOG — KOX Shield
 
+## 2026.06.07.01
+
+### 🚀 Поддержка протокола Hysteria2 (vless + hysteria2 в одной подписке)
+
+KOX Shield теперь работает и с `vless://` (Reality), и с `hysteria2://` / `hy2://`
+серверами. Подписка может содержать оба протокола одновременно; переключение между
+vless- и hysteria-серверами (в CLI, в Telegram-боте и в авто-режиме) выполняется
+корректно «на лету».
+
+- **Архитектура**: Xray остаётся прозрачным фронтом (iptables/TPROXY без изменений).
+  При выборе hysteria-сервера поднимается локальный hysteria-клиент
+  (`127.0.0.1:11888`, SOCKS5), а outbound `kox-proxy` (по тегу) перестраивается в
+  `socks` → hysteria. При выборе vless — `kox-proxy` снова становится нативным
+  vless/Reality outbound, а hysteria-клиент останавливается.
+- **`install.sh`**: автоопределение архитектуры (arm64/arm/mipsle/mips/amd64/386) и
+  загрузка бинарника `hysteria` из релизов apernet/hysteria; для MIPS — fallback на
+  softfloat-вариант. Создаётся init-скрипт `S25hysteria`, который запускает клиент
+  только при `KOX_PROTO=hysteria2`. В `kox.conf` добавлен параметр `KOX_PROTO`.
+- **`kox-cli.sh`**: универсальный разбор URI обоих протоколов; генерация
+  `hysteria/client.yaml` (TLS/SNI, obfs salamander, fastOpen); протокол-зависимые
+  pre-flight проверки (HTTPS для vless, ICMP/QUIC для hysteria) и откат, который
+  восстанавливает и Xray, и hysteria; `kox servers` показывает бейдж `[VLESS]`/`[HY2]`;
+  `kox status` и `kox restart` учитывают активный протокол.
+- **`kox-bot.sh`**: список серверов и переключение в боте поддерживают оба протокола;
+  откат восстанавливает состояние hysteria; сообщение об успехе показывает протокол.
+- **`kox-watchdog.sh` (v8)**: авто-возврат на основной сервер и `switch-auto`
+  работают для vless и hysteria; текущий сервер определяется по `KOX_SERVER`
+  (в hysteria-режиме в `config.json` адрес — `127.0.0.1`).
+
 ## 2026.05.20.01
 
 ### 🛠 Сбой ~05:14 — cron и зависший Xray
