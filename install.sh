@@ -208,6 +208,90 @@ INITSCRIPT
     ok "Xray init скрипт активирован"
   fi
 
+  install_hysteria
+}
+
+# ── Установка Hysteria2 (для подписок с hysteria2://|hy2://) ───────────────────
+# Xray остаётся прозрачным фронтом; hysteria поднимается как локальный
+# SOCKS5-клиент (127.0.0.1:11888), на который указывает outbound kox-proxy
+# при переключении на hysteria-сервер. На vless-серверах клиент не запускается.
+install_hysteria() {
+  HY_BIN="/opt/sbin/hysteria"
+  if [ -x "$HY_BIN" ] && "$HY_BIN" version >/dev/null 2>&1; then
+    ok "hysteria уже установлен"
+  else
+    info "Определяю архитектуру для hysteria..."
+    # Предпочитаем opkg-арку (Entware), иначе uname -m
+    OPKG_ARCH=$(opkg print-architecture 2>/dev/null | awk '{print $2}' | grep -v '^all$\|^noarch$' | tail -1)
+    RAW_ARCH="${OPKG_ARCH:-$(uname -m)}"
+    case "$RAW_ARCH" in
+      *aarch64*|*arm64*)            HY_ARCH="arm64" ;;
+      *armv7*|*armv6*|*arm*)        HY_ARCH="arm" ;;
+      *mipsel*|*mipsle*)            HY_ARCH="mipsle" ;;
+      *mips64el*)                   HY_ARCH="mipsle" ;;
+      *mips*)                       HY_ARCH="mips" ;;
+      *x86_64*|*amd64*)             HY_ARCH="amd64" ;;
+      *i?86*|*x86*)                 HY_ARCH="386" ;;
+      *)                            HY_ARCH="" ;;
+    esac
+    if [ -z "$HY_ARCH" ]; then
+      warn "Не удалось определить архитектуру ($RAW_ARCH) — hysteria пропущен (vless будет работать)"
+    else
+      info "Загружаю hysteria (linux-${HY_ARCH})..."
+      HY_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY_ARCH}"
+      if curl -fsSL --max-time 60 "$HY_URL" -o "$HY_BIN" 2>/dev/null && [ -s "$HY_BIN" ]; then
+        chmod +x "$HY_BIN"
+        if "$HY_BIN" version >/dev/null 2>&1; then
+          ok "hysteria установлен (${HY_ARCH})"
+        else
+          # На MIPS без FPU помогает softfloat-вариант
+          if [ "$HY_ARCH" = "mipsle" ] || [ "$HY_ARCH" = "mips" ]; then
+            info "Пробую softfloat-вариант hysteria..."
+            curl -fsSL --max-time 60 "${HY_URL}-sf" -o "$HY_BIN" 2>/dev/null && chmod +x "$HY_BIN"
+          fi
+          "$HY_BIN" version >/dev/null 2>&1 && ok "hysteria установлен (${HY_ARCH}-sf)" || \
+            warn "hysteria не запускается на этом устройстве — vless будет работать"
+        fi
+      else
+        warn "Не удалось загрузить hysteria — vless будет работать, hysteria-серверы недоступны"
+      fi
+    fi
+  fi
+
+  # init-скрипт S25hysteria: стартует клиент только когда KOX_PROTO=hysteria2
+  if [ ! -f "${INIT}/S25hysteria" ]; then
+    cat > "${INIT}/S25hysteria" << 'HYINIT'
+#!/bin/sh
+# S25hysteria — KOX Shield hysteria2 client (управляется kox)
+# Запускается только если активный протокол — hysteria2.
+BIN=/opt/sbin/hysteria
+HCONF=/opt/etc/hysteria/client.yaml
+KOXCONF=/opt/etc/xray/kox.conf
+LOG=/opt/var/log/hysteria.log
+[ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+
+hy_start() {
+  [ "${KOX_PROTO:-vless}" = "hysteria2" ] || { echo "hysteria: KOX_PROTO!=hysteria2 — пропуск"; return 0; }
+  [ -x "$BIN" ]   || { echo "hysteria: бинарник отсутствует"; return 1; }
+  [ -f "$HCONF" ] || { echo "hysteria: нет client.yaml"; return 1; }
+  killall hysteria 2>/dev/null; sleep 1
+  ulimit -n 65535 2>/dev/null || true
+  "$BIN" client -c "$HCONF" >> "$LOG" 2>&1 &
+  echo "hysteria client запущен"
+}
+hy_stop() { killall hysteria 2>/dev/null; echo "hysteria остановлен"; }
+
+case "$1" in
+  start)   hy_start ;;
+  stop)    hy_stop ;;
+  restart) hy_stop; sleep 1; hy_start ;;
+  *)       echo "usage: $0 {start|stop|restart}" ;;
+esac
+HYINIT
+    chmod +x "${INIT}/S25hysteria"
+    ok "S25hysteria init скрипт создан"
+  fi
+
   # Запустить crond если не работает
   if ! pgrep crond >/dev/null 2>&1; then
     "${INIT}/S10cron" start 2>/dev/null || crond -c /opt/var/spool/cron/crontabs 2>/dev/null || true
@@ -328,6 +412,7 @@ CONFIG
   cat > "${XRAY_CONF}/kox.conf" << KOXCONF
 # KOX Shield — параметры сервера
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
+KOX_PROTO="vless"
 KOX_SERVER="${VLESS_HOST}"
 KOX_PORT="${VLESS_PORT}"
 KOX_UUID="${VLESS_UUID}"

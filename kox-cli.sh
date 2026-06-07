@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.05.20.01"
+KOX_VERSION="2026.06.07.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -11,6 +11,11 @@ ACCLOG="/opt/var/log/xray-acc.log"
 BACKUP_DIR="/opt/etc/xray/backups"
 XRAY_INIT="/opt/etc/init.d/S24xray"
 BOT_INIT="/opt/etc/init.d/S90kox-bot"
+HYSTERIA_BIN="/opt/sbin/hysteria"
+HYSTERIA_CONF="/opt/etc/hysteria/client.yaml"
+HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
+HYSTERIA_SOCKS_PORT="11888"
+PROXY_TAG="kox-proxy"
 DOMAIN_MARKER="kox-custom-marker"
 IP_MARKER="192.0.2.255/32"
 
@@ -32,6 +37,147 @@ kox_xray_start() {
     "$XRAY_INIT" start 2>/dev/null
   else
     /opt/sbin/xray -config "$CONF" >> "$ERRLOG" 2>&1 &
+  fi
+}
+
+# ── Protocol-agnostic URI helpers (vless / hysteria2|hy2) ─────────────
+# Subscription lines may be vless:// (Reality) or hysteria2://|hy2:// (QUIC).
+# Xray is always the transparent front-end; the kox-proxy outbound is
+# rebuilt per protocol: VLESS -> native vless outbound; Hysteria2 ->
+# socks outbound to the local hysteria client (127.0.0.1:HYSTERIA_SOCKS_PORT).
+
+# Match both vless:// and hysteria2://|hy2:// at line start
+KOX_URI_GREP='^(vless|hysteria2|hy2)://'
+
+uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
+uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
+uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
+uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
+uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
+uri_remark() { printf '%s' "$1" | sed -n 's/.*#//p'; }
+# Query param from the ?...#  part (works for hy2 links)
+uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
+
+# Write hysteria client.yaml from a hysteria2:// URI
+kox_hysteria_write_conf() {
+  local URI="$1" AUTH HOST PORT SNI OBFS OBFSP INSECURE
+  AUTH=$(uri_userinfo "$URI")
+  HOST=$(uri_host "$URI")
+  PORT=$(uri_port "$URI"); [ -z "$PORT" ] && PORT=443
+  SNI=$(uri_qparam "$URI" sni)
+  OBFS=$(uri_qparam "$URI" obfs)
+  OBFSP=$(uri_qparam "$URI" obfs-password)
+  INSECURE=$(uri_qparam "$URI" insecure)
+  mkdir -p "$(dirname "$HYSTERIA_CONF")"
+  {
+    printf 'server: %s:%s\n' "$HOST" "$PORT"
+    printf 'auth: %s\n' "$AUTH"
+    printf 'tls:\n'
+    [ -n "$SNI" ] && printf '  sni: %s\n' "$SNI"
+    { [ "$INSECURE" = "1" ] || [ "$INSECURE" = "true" ]; } && printf '  insecure: true\n'
+    if [ -n "$OBFS" ]; then
+      printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$OBFS" "$OBFS" "$OBFSP"
+    fi
+    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
+    printf 'fastOpen: true\n'
+  } > "$HYSTERIA_CONF"
+}
+
+kox_hysteria_start() {
+  if [ -x "$HYSTERIA_INIT" ]; then
+    "$HYSTERIA_INIT" restart >/dev/null 2>&1
+  else
+    killall hysteria 2>/dev/null; sleep 1
+    "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 &
+  fi
+}
+
+kox_hysteria_stop() {
+  [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" stop >/dev/null 2>&1
+  killall hysteria 2>/dev/null
+}
+
+# Rebuild the kox-proxy outbound (by tag) as a socks outbound -> hysteria client.
+kox_proxy_set_socks() {
+  local TMP=/tmp/kox-proxy-socks.json
+  jq --argjson port "$HYSTERIA_SOCKS_PORT" --arg tag "$PROXY_TAG" '
+    .outbounds = [.outbounds[] |
+      if .tag == $tag then
+        {tag: $tag, protocol: "socks",
+         settings: {servers: [{address: "127.0.0.1", port: ($port|tonumber)}]}}
+      else . end ]
+  ' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && mv "$TMP" "$CONF"
+}
+
+# Rebuild the kox-proxy outbound (by tag) as a native vless/Reality outbound.
+kox_proxy_set_vless() {
+  local ADDR="$1" PORT="$2" UUID="$3" FLOW="$4" SNI="$5" PBK="$6" SID="$7" FP="$8" SPX="$9"
+  local TMP=/tmp/kox-proxy-vless.json
+  jq --arg tag "$PROXY_TAG" --arg addr "$ADDR" --argjson port "${PORT:-443}" \
+     --arg uuid "$UUID" --arg flow "$FLOW" --arg sni "${SNI:-www.google.com}" \
+     --arg pbk "$PBK" --arg sid "$SID" --arg fp "${FP:-chrome}" --arg spx "${SPX:-/}" '
+    .outbounds = [.outbounds[] |
+      if .tag == $tag then
+        {tag: $tag, protocol: "vless",
+         settings: {vnext: [{address: $addr, port: ($port|tonumber),
+           users: [{id: $uuid, encryption: "none", flow: $flow}]}]},
+         streamSettings: {network: "tcp", security: "reality",
+           realitySettings: {serverName: $sni, publicKey: $pbk,
+             shortId: $sid, fingerprint: $fp, spiderX: $spx}}}
+      else . end ]
+  ' "$CONF" > "$TMP" 2>/dev/null
+  [ -s "$TMP" ] && mv "$TMP" "$CONF"
+}
+
+# Global kox.conf setter (functions below also define a local one; harmless).
+_kox_conf_set() {
+  local K="$1" V="$2"
+  if [ ! -f "$KOXCONF" ]; then
+    printf '%s="%s"\n' "$K" "$V" > "$KOXCONF"
+  elif grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
+    sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
+  else
+    printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
+  fi
+}
+
+# Apply a subscription URI (vless or hysteria2) to the active config.
+# Updates kox-proxy outbound + kox.conf (KOX_PROTO and fields). Does NOT restart.
+kox_apply_server_uri() {
+  local URI="$1"
+  local HOST PORT REM
+  HOST=$(uri_host "$URI"); PORT=$(uri_port "$URI"); [ -z "$PORT" ] && PORT=443
+  _kox_conf_set KOX_SERVER "$HOST"
+  _kox_conf_set KOX_PORT   "$PORT"
+  if uri_is_hy "$URI"; then
+    local AUTH SNI
+    AUTH=$(uri_userinfo "$URI"); SNI=$(uri_qparam "$URI" sni)
+    kox_hysteria_write_conf "$URI"
+    # Set KOX_PROTO BEFORE starting hysteria — S25hysteria gates on it.
+    _kox_conf_set KOX_PROTO hysteria2
+    kox_hysteria_start
+    kox_proxy_set_socks
+    _kox_conf_set KOX_UUID  "$AUTH"
+    [ -n "$SNI" ] && _kox_conf_set KOX_SNI "$SNI"
+    _kox_conf_set KOX_FLOW ""
+  else
+    local UUID PARAMS SNI FLOW PBK SID FP SPX
+    UUID=$(uri_userinfo "$URI")
+    PARAMS=$(printf '%s' "$URI" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
+    SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
+    FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
+    PBK=$(printf '%s'  "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
+    SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
+    FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
+    SPX=$(_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
+    [ -z "$SPX" ] && SPX="/"
+    kox_hysteria_stop
+    kox_proxy_set_vless "$HOST" "$PORT" "$UUID" "$FLOW" "$SNI" "$PBK" "$SID" "$FP" "$SPX"
+    _kox_conf_set KOX_PROTO vless
+    _kox_conf_set KOX_UUID "$UUID"
+    _kox_conf_set KOX_SNI  "${SNI:-www.google.com}"
+    _kox_conf_set KOX_FLOW "$FLOW"
   fi
 }
 
@@ -95,6 +241,78 @@ CRONINIT
   return 1
 }
 
+# Install hysteria binary + S25hysteria init (idempotent). Used on upgrade so
+# existing installs gain hysteria2 support. vless keeps working if this fails.
+kox_install_hysteria() {
+  local INITD="/opt/etc/init.d"
+  if [ -x "$HYSTERIA_BIN" ] && "$HYSTERIA_BIN" version >/dev/null 2>&1; then
+    ok "hysteria уже установлен"
+  else
+    local OPKG_ARCH RAW_ARCH HY_ARCH HY_URL
+    OPKG_ARCH=$(opkg print-architecture 2>/dev/null | awk '{print $2}' | grep -v '^all$\|^noarch$' | tail -1)
+    RAW_ARCH="${OPKG_ARCH:-$(uname -m)}"
+    case "$RAW_ARCH" in
+      *aarch64*|*arm64*)     HY_ARCH="arm64" ;;
+      *armv7*|*armv6*|*arm*) HY_ARCH="arm" ;;
+      *mipsel*|*mipsle*|*mips64el*) HY_ARCH="mipsle" ;;
+      *mips*)                HY_ARCH="mips" ;;
+      *x86_64*|*amd64*)      HY_ARCH="amd64" ;;
+      *i?86*|*x86*)          HY_ARCH="386" ;;
+      *)                     HY_ARCH="" ;;
+    esac
+    if [ -z "$HY_ARCH" ]; then
+      warn "hysteria: не определена архитектура ($RAW_ARCH) — пропуск (vless работает)"
+    else
+      mkdir -p "$(dirname "$HYSTERIA_BIN")"
+      HY_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY_ARCH}"
+      if curl -fsSL --max-time 60 "$HY_URL" -o "$HYSTERIA_BIN" 2>/dev/null && [ -s "$HYSTERIA_BIN" ]; then
+        chmod +x "$HYSTERIA_BIN"
+        if ! "$HYSTERIA_BIN" version >/dev/null 2>&1; then
+          case "$HY_ARCH" in
+            mips|mipsle)
+              curl -fsSL --max-time 60 "${HY_URL}-sf" -o "$HYSTERIA_BIN" 2>/dev/null && chmod +x "$HYSTERIA_BIN" ;;
+          esac
+        fi
+        "$HYSTERIA_BIN" version >/dev/null 2>&1 && ok "hysteria установлен (${HY_ARCH})" || \
+          warn "hysteria не запускается на этом устройстве (vless работает)"
+      else
+        warn "hysteria: не удалось загрузить (vless работает)"
+      fi
+    fi
+  fi
+  if [ ! -f "${INITD}/S25hysteria" ]; then
+    cat > "${INITD}/S25hysteria" << 'HYINIT'
+#!/bin/sh
+# S25hysteria — KOX Shield hysteria2 client (управляется kox)
+BIN=/opt/sbin/hysteria
+HCONF=/opt/etc/hysteria/client.yaml
+KOXCONF=/opt/etc/xray/kox.conf
+LOG=/opt/var/log/hysteria.log
+[ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+hy_start() {
+  [ "${KOX_PROTO:-vless}" = "hysteria2" ] || { echo "hysteria: KOX_PROTO!=hysteria2 — пропуск"; return 0; }
+  [ -x "$BIN" ]   || { echo "hysteria: бинарник отсутствует"; return 1; }
+  [ -f "$HCONF" ] || { echo "hysteria: нет client.yaml"; return 1; }
+  killall hysteria 2>/dev/null; sleep 1
+  ulimit -n 65535 2>/dev/null || true
+  "$BIN" client -c "$HCONF" >> "$LOG" 2>&1 &
+  echo "hysteria client запущен"
+}
+hy_stop() { killall hysteria 2>/dev/null; echo "hysteria остановлен"; }
+case "$1" in
+  start) hy_start ;; stop) hy_stop ;; restart) hy_stop; sleep 1; hy_start ;;
+  *) echo "usage: $0 {start|stop|restart}" ;;
+esac
+HYINIT
+    chmod +x "${INITD}/S25hysteria"
+    ok "S25hysteria init создан"
+  fi
+  if [ -f "$KOXCONF" ] && ! grep -q '^KOX_PROTO=' "$KOXCONF" 2>/dev/null; then
+    printf 'KOX_PROTO="vless"\n' >> "$KOXCONF"
+    ok "KOX_PROTO=vless добавлен в kox.conf"
+  fi
+}
+
 kox_upgrade_post() {
   kox_patch_s24xray 2>/dev/null
   if grep -q 'ulimit.*65535' "$XRAY_INIT" 2>/dev/null; then
@@ -110,6 +328,7 @@ kox_upgrade_post() {
     printf 'KOX_FAILOVER_MINUTES="3"\n' >> "$KOXCONF"
     ok "KOX_FAILOVER_MINUTES=3 (быстрое авто-переключение при сбое VPN)"
   fi
+  kox_install_hysteria 2>/dev/null || true
 }
 
 # OSC 8 clickable hyperlink (works in iTerm2, VSCode, Kitty, etc.)
@@ -221,11 +440,19 @@ kox_status() {
   # Server info
   load_conf
   if [ -n "${KOX_SERVER:-}" ]; then
-    info "Сервер: ${W}${KOX_SERVER}:${KOX_PORT:-443}${N}"
+    info "Сервер: ${W}${KOX_SERVER}:${KOX_PORT:-443}${N}  (${W}${KOX_PROTO:-vless}${N})"
   else
     SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
     PORT=$(grep -m1 '"port"' "$CONF" 2>/dev/null | sed 's/.*"port": *\([0-9]*\).*/\1/')
     [ -n "$SRV" ] && info "Сервер: ${W}${SRV}:${PORT}${N}"
+  fi
+  # Hysteria client health (when active protocol is hysteria2)
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
+    if pgrep -f "hysteria client" >/dev/null 2>&1; then
+      ok "Hysteria2-клиент запущен (socks 127.0.0.1:${HYSTERIA_SOCKS_PORT})"
+    else
+      warn "Hysteria2-клиент не запущен — выполните kox switch <N> или kox restart"
+    fi
   fi
 
   # Connectivity
@@ -273,6 +500,14 @@ kox_off() {
 }
 
 kox_restart() {
+  load_conf
+  # В hysteria-режиме поднимаем/перезапускаем hysteria-клиент (xray остаётся фронтом)
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
+    info "Перезапускаю Hysteria2-клиент..."
+    kox_hysteria_start
+  else
+    kox_hysteria_stop 2>/dev/null || true
+  fi
   info "Перезапускаю Xray..."
   kox_patch_s24xray 2>/dev/null || true
   kox_xray_ulimit
@@ -508,86 +743,39 @@ kox_update_sub() {
   [ -z "$RAW" ] && { fail "Не удалось получить данные подписки"; return 1; }
 
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-  SERVERS_COUNT=$(printf '%s\n' "$DECODED" | grep -c '^vless://')
+  SERVERS_COUNT=$(printf '%s\n' "$DECODED" | grep -cE "$KOX_URI_GREP")
 
-  [ "$SERVERS_COUNT" -eq 0 ] && { fail "vless:// записи не найдены в подписке"; return 1; }
+  [ "$SERVERS_COUNT" -eq 0 ] && { fail "Серверы (vless/hysteria2) не найдены в подписке"; return 1; }
 
   # Invalidate the CLI server cache so kox servers/switch use fresh data next time
   rm -f /tmp/kox-cli-servers.txt
 
   ok "Подписка содержит ${W}${SERVERS_COUNT}${N} сервер(ов)"
 
-  # Find the VLESS entry matching the currently configured server.
-  # Falls back to the first entry if the current server is not in the subscription
-  # (e.g., was removed or the subscription was replaced entirely).
+  # Find the entry (vless или hysteria2) matching the currently configured server.
+  # Falls back to the first entry if the current server is not in the subscription.
   CURRENT_HOST="${KOX_SERVER:-}"
-  VLESS_LINE=""
+  SRV_LINE=""
   if [ -n "$CURRENT_HOST" ]; then
-    VLESS_LINE=$(printf '%s\n' "$DECODED" | grep "^vless://" | grep "@${CURRENT_HOST}:" | head -1)
-    [ -n "$VLESS_LINE" ] && info "Нашёл текущий сервер ${W}${CURRENT_HOST}${N} в подписке — обновляю его параметры"
+    SRV_LINE=$(printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | grep "@${CURRENT_HOST}:" | head -1)
+    [ -n "$SRV_LINE" ] && info "Нашёл текущий сервер ${W}${CURRENT_HOST}${N} в подписке — обновляю его параметры"
   fi
-  if [ -z "$VLESS_LINE" ]; then
-    VLESS_LINE=$(printf '%s\n' "$DECODED" | grep -m1 '^vless://')
+  if [ -z "$SRV_LINE" ]; then
+    SRV_LINE=$(printf '%s\n' "$DECODED" | grep -m1 -E "$KOX_URI_GREP")
     warn "Текущий сервер не найден в подписке — использую первый сервер"
   fi
 
-  # Parse fields
-  BODY=${VLESS_LINE#vless://}
-  NEW_UUID=${BODY%%@*}
-  HOSTPORT=${BODY#*@}; HOSTPORT=${HOSTPORT%%\?*}
-  NEW_HOST=${HOSTPORT%%:*}; NEW_PORT=${HOSTPORT##*:}
-  PARAMS=${BODY#*\?}; PARAMS=${PARAMS%%#*}
+  local NEW_HOST NEW_PORT NEW_PROTO
+  NEW_HOST=$(uri_host "$SRV_LINE"); NEW_PORT=$(uri_port "$SRV_LINE"); [ -z "$NEW_PORT" ] && NEW_PORT=443
+  NEW_PROTO=$(uri_proto "$SRV_LINE")
+  [ -z "$NEW_HOST" ] && { fail "Не удалось разобрать ссылку сервера"; return 1; }
 
-  _gp() { printf '%s' "$PARAMS" | tr '&' '\n' | grep "^$1=" | cut -d= -f2 | head -1; }
-  NEW_PBK=$(_gp pbk); NEW_SID=$(_gp sid); NEW_SNI=$(_gp sni)
-  NEW_FP=$(_gp fp); NEW_FLOW=$(_gp flow)
-  NEW_SPX=$(_decode_remark "$(_gp spx)")
-  [ -z "$NEW_SPX" ] && NEW_SPX="/"
-
-  [ -z "$NEW_HOST" ] || [ -z "$NEW_UUID" ] && { fail "Не удалось разобрать VLESS URL"; return 1; }
-
-  # Update config.json using jq (preserves inbound ports)
-  if [ -f "$CONF" ] && command -v jq >/dev/null 2>&1; then
-    jq --arg addr "$NEW_HOST" --argjson port "${NEW_PORT}" \
-       --arg uuid "$NEW_UUID" --arg pbk "$NEW_PBK" \
-       --arg sni  "${NEW_SNI:-www.google.com}" --arg sid "$NEW_SID" \
-       --arg flow "$NEW_FLOW" --arg fp "${NEW_FP:-chrome}" \
-       --arg spx "$NEW_SPX" '
-      .outbounds = [.outbounds[] |
-        if .protocol == "vless" then
-          .settings.vnext[0].address = $addr |
-          .settings.vnext[0].port = ($port | tonumber) |
-          .settings.vnext[0].users[0].id = $uuid |
-          .settings.vnext[0].users[0].flow = $flow |
-          (if $pbk  != "" then .streamSettings.realitySettings.publicKey   = $pbk  else . end) |
-          (if $sni  != "" then .streamSettings.realitySettings.serverName  = $sni  else . end) |
-          (if $sid  != "" then .streamSettings.realitySettings.shortId     = $sid  else . end) |
-          (if $fp   != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
-          .streamSettings.realitySettings.spiderX = $spx
-        else . end
-      ]
-    ' "$CONF" > /tmp/kox-conf-update.json && mv /tmp/kox-conf-update.json "$CONF"
-    ok "config.json обновлён"
-  fi
-
-  # Update kox.conf
-  _kox_conf_set() {
-    local K="$1" V="$2"
-    if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
-      sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
-    else
-      printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
-    fi
-  }
-  _kox_conf_set KOX_SERVER "$NEW_HOST"
-  _kox_conf_set KOX_PORT   "$NEW_PORT"
-  _kox_conf_set KOX_UUID   "$NEW_UUID"
-  [ -n "$NEW_SNI"  ] && _kox_conf_set KOX_SNI  "$NEW_SNI"
-  [ -n "$NEW_FLOW" ] && _kox_conf_set KOX_FLOW "$NEW_FLOW"
-  ok "kox.conf обновлён"
+  # Применяем (vless или hysteria2) единой логикой — обновляет config.json + kox.conf
+  kox_apply_server_uri "$SRV_LINE"
+  ok "config.json и kox.conf обновлены (${NEW_PROTO})"
 
   kox_restart
-  ok "Подписка обновлена: ${W}${NEW_HOST}:${NEW_PORT}${N}"
+  ok "Подписка обновлена: ${W}${NEW_HOST}:${NEW_PORT}${N} (${NEW_PROTO})"
   sep
   info "Серверов в подписке: ${W}${SERVERS_COUNT}${N}. Используйте ${W}kox servers${N} чтобы увидеть все."
 }
@@ -1481,12 +1669,12 @@ kox_populate_auto_servers_file() {
   fi
   if [ -n "$RAW" ]; then
     DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-    printf '%s\n' "$DECODED" | grep '^vless://' > /tmp/kox-auto-servers.txt
+    printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" > /tmp/kox-auto-servers.txt
     [ -s /tmp/kox-auto-servers.txt ] && return 0
   fi
   for cache in /tmp/kox-cli-servers.txt /tmp/kox-servers.txt; do
     if [ -s "$cache" ]; then
-      cut -f6- "$cache" 2>/dev/null | grep '^vless://' > /tmp/kox-auto-servers.txt
+      cut -f6- "$cache" 2>/dev/null | grep -E "$KOX_URI_GREP" > /tmp/kox-auto-servers.txt
       [ -s /tmp/kox-auto-servers.txt ] && return 0
     fi
   done
@@ -1512,11 +1700,11 @@ _fetch_servers() {
   fi
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
   local IDX=0
-  printf '%s\n' "$DECODED" | grep '^vless://' | while IFS= read -r VLINE; do
+  printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | while IFS= read -r VLINE; do
     [ -z "$VLINE" ] && continue
     local HOST PORT ENCODED_REMARK PING_MS
-    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
-    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    HOST=$(uri_host "$VLINE")
+    PORT=$(uri_port "$VLINE"); [ -z "$PORT" ] && PORT=443
     ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
     [ -z "$ENCODED_REMARK" ] && ENCODED_REMARK="$HOST"
     PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
@@ -1542,15 +1730,17 @@ kox_servers() {
   sep
   load_conf
   local CURRENT_SRV
-  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  CURRENT_SRV="${KOX_SERVER:-}"
+  [ -z "$CURRENT_SRV" ] && CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   _fetch_servers > /tmp/kox-cli-servers.txt
   [ ! -s /tmp/kox-cli-servers.txt ] && { warn "Серверы не найдены"; return 1; }
-  while IFS='	' read -r IDX HOST PORT ENC_REMARK PING_MS _; do
-    local MARK=" " REMARK
+  while IFS='	' read -r IDX HOST PORT ENC_REMARK PING_MS URL; do
+    local MARK=" " REMARK PROTO BADGE
     [ "$HOST" = "$CURRENT_SRV" ] && MARK="${G}✓${N}"
     REMARK=$(_decode_remark "$ENC_REMARK")
-    printf "  %s ${W}[%s]${N}  %s\n        ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
-      "$MARK" "$IDX" "$REMARK" "$HOST" "$PORT" "$PING_MS"
+    if uri_is_hy "$URL"; then BADGE="${C}HY2${N}"; else BADGE="${C}VLESS${N}"; fi
+    printf "  %s ${W}[%s]${N}  %s  ${W}(%s)${N}\n        ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
+      "$MARK" "$IDX" "$REMARK" "$BADGE" "$HOST" "$PORT" "$PING_MS"
   done < /tmp/kox-cli-servers.txt
   sep
   info "Переключиться: ${W}kox switch <номер>${N}"
@@ -1579,86 +1769,42 @@ kox_switch() {
   REMARK=$(_decode_remark "$ENC_REMARK")
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
-  local CURRENT_SRV
-  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  local CURRENT_SRV PROTO
+  CURRENT_SRV="${KOX_SERVER:-}"
+  PROTO=$(uri_proto "$VLESS_URL")
   if [ "$HOST" = "$CURRENT_SRV" ]; then
     ok "Уже подключено к этому серверу: ${W}${REMARK}${N}"
     return 0
   fi
 
-  # Parse VLESS URL
-  local UUID PARAMS SNI FLOW PBKEY SID FP SPX
-  UUID=$(printf '%s' "$VLESS_URL" | sed 's|vless://\([^@]*\)@.*|\1|')
-  PARAMS=$(printf '%s' "$VLESS_URL" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
-  SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
-  FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-  PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
-  SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
-  FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
-  SPX=$(printf '%s'  "$PARAMS" | grep -o 'spx=[^&]*'  | cut -d= -f2)
-  SPX=$(_decode_remark "${SPX:-/}")
-
-  [ -z "$UUID" ] || [ -z "$HOST" ] && { fail "Не удалось разобрать VLESS URL"; return 1; }
+  [ -z "$HOST" ] && { fail "Не удалось разобрать ссылку сервера"; return 1; }
 
   sep
   info "${W}Переключаюсь на: ${REMARK}${N}"
-  info "Адрес: ${W}${HOST}:${PORT:-443}${N}"
+  info "Адрес: ${W}${HOST}:${PORT:-443}${N}  Протокол: ${W}${PROTO}${N}"
   sep
 
-  # Step 1: pre-flight
+  # Step 1: pre-flight (TCP/TLS для vless; ping для hysteria/QUIC)
   info "1/4 — проверяю доступность сервера..."
   local PRE_OK=0
-  for i in 1 2 3; do
-    if curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 "https://${HOST}:${PORT:-443}/" 2>/dev/null; then
-      PRE_OK=1; break
-    fi
-    sleep 1
-  done
+  if [ "$PROTO" = "vless" ]; then
+    for i in 1 2 3; do
+      if curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 "https://${HOST}:${PORT:-443}/" 2>/dev/null; then
+        PRE_OK=1; break
+      fi
+      sleep 1
+    done
+  fi
   [ "$PRE_OK" = "0" ] && ping -c 1 -W 2 "$HOST" >/dev/null 2>&1 && PRE_OK=1
   [ "$PRE_OK" = "0" ] && { fail "Сервер недоступен. Текущий VPN не тронут."; return 1; }
   ok "Сервер доступен"
 
-  # Step 2: backup + apply config
-  info "2/4 — применяю новый конфиг..."
+  # Step 2: backup + apply config (vless или hysteria2)
+  info "2/4 — применяю новый конфиг (${PROTO})..."
   cp "$CONF"    /tmp/kox-config-backup.json 2>/dev/null
   cp "$KOXCONF" /tmp/kox-conf-backup        2>/dev/null
-  # Update kox.conf inline (no shared helper between scripts)
-  _kox_conf_set() {
-    local K="$1" V="$2"
-    if [ ! -f "$KOXCONF" ]; then
-      printf '%s="%s"\n' "$K" "$V" > "$KOXCONF"
-    elif grep -q "^${K}=" "$KOXCONF"; then
-      sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
-    else
-      printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
-    fi
-  }
-  _kox_conf_set KOX_SERVER "$HOST"
-  _kox_conf_set KOX_PORT   "${PORT:-443}"
-  _kox_conf_set KOX_UUID   "$UUID"
-  _kox_conf_set KOX_SNI    "${SNI:-www.google.com}"
-  _kox_conf_set KOX_FLOW   "$FLOW"
-  local TMP_CONF=/tmp/kox-switch-tmp.json P="${PORT:-443}"
-  jq --arg addr "$HOST" --argjson port "$P" \
-     --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
-     --arg flow "$FLOW" --arg pbkey "$PBKEY" \
-     --arg sid "$SID" --arg fp "${FP:-chrome}" \
-     --arg spx "${SPX:-/}" '
-    .outbounds = [.outbounds[] |
-      if .protocol == "vless" then
-        .settings.vnext[0].address = $addr |
-        .settings.vnext[0].port = ($port | tonumber) |
-        .settings.vnext[0].users[0].id = $uuid |
-        .settings.vnext[0].users[0].flow = $flow |
-        .streamSettings.realitySettings.serverName = $sni |
-        (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
-        (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
-        (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
-        .streamSettings.realitySettings.spiderX = $spx
-      else . end
-    ]
-  ' "$CONF" > "$TMP_CONF" 2>/dev/null
-  [ -s "$TMP_CONF" ] && mv "$TMP_CONF" "$CONF"
+  cp "$HYSTERIA_CONF" /tmp/kox-hy-backup.yaml 2>/dev/null
+  kox_apply_server_uri "$VLESS_URL"
   ok "Конфиг применён"
 
   # Step 3: restart xray
@@ -1696,6 +1842,10 @@ kox_switch() {
   warn "Туннель не отвечает — выполняю откат..."
   cp /tmp/kox-config-backup.json "$CONF"    2>/dev/null
   cp /tmp/kox-conf-backup        "$KOXCONF" 2>/dev/null
+  cp /tmp/kox-hy-backup.yaml     "$HYSTERIA_CONF" 2>/dev/null
+  # Восстанавливаем движок предыдущего протокола
+  load_conf
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then kox_hysteria_start; else kox_hysteria_stop; fi
   killall xray 2>/dev/null; sleep 2
   kox_xray_start
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -1703,7 +1853,7 @@ kox_switch() {
     sleep 1
   done
   sep
-  fail "Переключение отменено — Reality-туннель не работает на новом сервере"
+  fail "Переключение отменено — туннель не работает на новом сервере"
   info "Восстановлен предыдущий конфиг"
   sep
   return 1
@@ -1735,7 +1885,7 @@ kox_switch_auto() {
 
   # Current active server — skip it (it's presumably broken)
   local CURRENT_HOST
-  CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  CURRENT_HOST="${KOX_SERVER:-}"
 
   local TOTAL
   TOTAL=$(wc -l < /tmp/kox-auto-servers.txt | tr -d ' ')
@@ -1746,18 +1896,21 @@ kox_switch_auto() {
   local SWITCHED=0
   while IFS= read -r VLINE; do
     [ -z "$VLINE" ] && continue
-    local HOST PORT UUID PARAMS SNI FLOW PBKEY SID FP SPX ENC_REMARK REMARK
-    HOST=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@\([^:?/#]*\).*|\1|')
-    PORT=$(printf '%s' "$VLINE" | sed 's|vless://[^@]*@[^:]*:\([0-9]*\).*|\1|')
+    local HOST PORT PROTO ENC_REMARK REMARK
+    HOST=$(uri_host "$VLINE")
+    PORT=$(uri_port "$VLINE"); [ -z "$PORT" ] && PORT=443
+    PROTO=$(uri_proto "$VLINE")
 
     # Skip current server
     [ "$HOST" = "$CURRENT_HOST" ] && continue
 
-    # Quick pre-flight: TCP+TLS reachability
-    [ "$QUIET" != "--quiet" ] && printf "  Проверяю %s:%s ... " "$HOST" "${PORT:-443}"
+    # Quick pre-flight: TCP+TLS для vless, ping для hysteria/QUIC
+    [ "$QUIET" != "--quiet" ] && printf "  Проверяю %s:%s (%s) ... " "$HOST" "${PORT:-443}" "$PROTO"
     local OK=0
-    curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
-      "https://${HOST}:${PORT:-443}/" 2>/dev/null && OK=1
+    if [ "$PROTO" = "vless" ]; then
+      curl -s -o /dev/null -k --connect-timeout 3 --max-time 5 \
+        "https://${HOST}:${PORT:-443}/" 2>/dev/null && OK=1
+    fi
     [ "$OK" = "0" ] && ping -c 1 -W 2 "$HOST" >/dev/null 2>&1 && OK=1
 
     if [ "$OK" = "0" ]; then
@@ -1766,58 +1919,16 @@ kox_switch_auto() {
     fi
     [ "$QUIET" != "--quiet" ] && printf "${G}доступен${N}\n"
 
-    # Parse VLESS fields
-    UUID=$(printf '%s' "$VLINE" | sed 's|vless://\([^@]*\)@.*|\1|')
-    PARAMS=$(printf '%s' "$VLINE" | sed 's/.*?\(.*\)#.*/\1/; s/.*?\(.*\)/\1/')
-    SNI=$(printf '%s'  "$PARAMS" | grep -o 'sni=[^&]*'  | cut -d= -f2)
-    FLOW=$(printf '%s' "$PARAMS" | grep -o 'flow=[^&]*' | cut -d= -f2)
-    PBKEY=$(printf '%s' "$PARAMS"| grep -o 'pbk=[^&]*'  | cut -d= -f2)
-    SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
-    FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
-    SPX=$(_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
-    [ -z "$SPX" ] && SPX="/"
     ENC_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
     REMARK=$(_decode_remark "$ENC_REMARK")
     [ -z "$REMARK" ] && REMARK="$HOST"
 
-    # Apply new config
-    _kox_conf_set() {
-      local K="$1" V="$2"
-      if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
-        sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
-      else
-        printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
-      fi
-    }
     cp "$CONF" /tmp/kox-autoswitch-backup.json 2>/dev/null
     cp "$KOXCONF" /tmp/kox-autoswitch-conf-backup 2>/dev/null
-    _kox_conf_set KOX_SERVER "$HOST"
-    _kox_conf_set KOX_PORT   "${PORT:-443}"
-    _kox_conf_set KOX_UUID   "$UUID"
-    _kox_conf_set KOX_SNI    "${SNI:-www.google.com}"
-    _kox_conf_set KOX_FLOW   "$FLOW"
+    cp "$HYSTERIA_CONF" /tmp/kox-autoswitch-hy-backup.yaml 2>/dev/null
 
-    local TMP_CONF=/tmp/kox-autoswitch-tmp.json P="${PORT:-443}"
-    jq --arg addr "$HOST" --argjson port "$P" \
-       --arg uuid "$UUID" --arg sni "${SNI:-www.google.com}" \
-       --arg flow "$FLOW" --arg pbkey "$PBKEY" \
-       --arg sid "$SID" --arg fp "${FP:-chrome}" \
-       --arg spx "${SPX:-/}" '
-      .outbounds = [.outbounds[] |
-        if .protocol == "vless" then
-          .settings.vnext[0].address = $addr |
-          .settings.vnext[0].port = ($port | tonumber) |
-          .settings.vnext[0].users[0].id = $uuid |
-          .settings.vnext[0].users[0].flow = $flow |
-          .streamSettings.realitySettings.serverName = $sni |
-          (if $pbkey != "" then .streamSettings.realitySettings.publicKey  = $pbkey else . end) |
-          (if $sid   != "" then .streamSettings.realitySettings.shortId    = $sid   else . end) |
-          (if $fp    != "" then .streamSettings.realitySettings.fingerprint = $fp   else . end) |
-          .streamSettings.realitySettings.spiderX = $spx
-        else . end
-      ]
-    ' "$CONF" > "$TMP_CONF" 2>/dev/null
-    [ -s "$TMP_CONF" ] && mv "$TMP_CONF" "$CONF"
+    # Apply server (vless или hysteria2) — единая логика
+    kox_apply_server_uri "$VLINE"
 
     # Restart xray
     killall xray 2>/dev/null; sleep 2
@@ -1850,9 +1961,15 @@ kox_switch_auto() {
       # Tunnel failed — restore and try next
       cp /tmp/kox-autoswitch-backup.json "$CONF" 2>/dev/null
       cp /tmp/kox-autoswitch-conf-backup "$KOXCONF" 2>/dev/null
+      cp /tmp/kox-autoswitch-hy-backup.yaml "$HYSTERIA_CONF" 2>/dev/null
       [ "$QUIET" != "--quiet" ] && warn "Туннель к $HOST не прошёл — пробую следующий"
     fi
   done < /tmp/kox-auto-servers.txt
+  # Если ни один не подошёл — вернуть движок к текущему протоколу
+  if [ "$SWITCHED" = "0" ]; then
+    load_conf
+    if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then kox_hysteria_start; else kox_hysteria_stop; fi
+  fi
 
   [ "$SWITCHED" = "0" ] && { fail "Ни один резервный сервер не прошёл тест"; return 1; }
   return 0
