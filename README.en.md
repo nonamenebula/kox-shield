@@ -9,8 +9,9 @@
   ╚═╝  ╚═╝   ╚═════╝  ╚═╝  ╚═╝
 ```
 
-**KOX Shield — smart traffic encryption for Keenetic routers**
+**KOX Shield — smart traffic encryption for Keenetic routers (VLESS/Reality + Hysteria2)**
 
+[![Version](https://img.shields.io/badge/version-2026.06.07-blue)](CHANGELOG.md)
 [![Telegram](https://img.shields.io/badge/Telegram-Channel-blue?logo=telegram)](https://t.me/PrivateProxyKox)
 [![Bot](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://t.me/kox_nonamenebula_bot)
 [![Site](https://img.shields.io/badge/🛡️-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
@@ -24,7 +25,7 @@
 
 ## 🚀 What is KOX Shield?
 
-**KOX Shield** is a fully automated VLESS/Reality tunnel setup for Keenetic routers. Traffic to selected sites goes through the VPN; everything else goes directly through your ISP. No manual configuration needed.
+**KOX Shield** is a fully automated VPN tunnel setup for Keenetic routers with two protocols: **VLESS/Reality** and **Hysteria2**. Traffic to selected sites goes through the VPN; everything else goes directly through your ISP. No manual configuration needed.
 
 > ✅ **Migrating from Kvass?** The installer automatically detects and cleanly removes Kvass, Shadowsocks, and sing-box before setting up KOX Shield — just answer "yes" when prompted.
 
@@ -32,24 +33,28 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🔀 **Умное шифрование** | Only selected sites through VPN, everything else direct |
+| 🔀 **Smart encryption** | Only selected sites through VPN, everything else direct |
 | ⚡ **VLESS + Reality** | Modern protocol — invisible to ISP and DPI |
+| 🚀 **Hysteria2 (QUIC)** | Fast UDP protocol with Salamander obfuscation — stable where TCP is throttled |
+| 🔁 **Both protocols in one subscription** | A subscription can mix VLESS and Hysteria2; the router switches between them correctly |
 | 📱 **Telegram Bot** | Full router management from Telegram |
 | 💻 **KOX Console** | Router CLI — `kox status`, `kox add`, `kox list`... |
 | 🔄 **Auto-update** | Daily subscription parameter refresh |
 | 🏠 **Whole network** | Works on all devices once the router is set up |
 
+> 🧩 **How it works:** Xray is always the transparent front-end (iptables intercepts only ports 80/443). For a VLESS server the outbound is native VLESS/Reality; for a Hysteria2 server a local `hysteria` client (SOCKS5 on `127.0.0.1`) is started and Xray routes traffic into it. Switching between protocols is fully automatic — routing rules and domain lists stay unchanged.
+
 ---
 
-## 🔑 Getting a VLESS Server
+## 🔑 Getting a Server
 
 ### Option 1: KOX Shield Subscription (ready in 1 minute)
 
-Register at **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — get a ready VLESS subscription with multiple servers, support, and auto-update.
+Register at **[kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register)** — get a ready subscription with multiple servers (VLESS/Reality and/or Hysteria2), support, and auto-update. The router detects each server's protocol automatically.
 
 ### Option 2: Your Own Server
 
-If you have a VPS, set up your own VLESS/Reality server:
+If you have a VPS, set up your own VLESS/Reality or Hysteria2 server. VLESS/Reality example:
 
 **1. Install Xray on the server (Ubuntu/Debian):**
 ```bash
@@ -94,7 +99,14 @@ cat /proc/sys/kernel/random/uuid     # UUID
 vless://UUID@YOUR-IP:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBLIC-KEY&sid=SHORT-ID&flow=xtls-rprx-vision#MyServer
 ```
 
-> 💡 More about Reality: [github.com/XTLS/REALITY](https://github.com/XTLS/REALITY)
+A **Hysteria2 link** (if you run [Hysteria2](https://v2.hysteria.network/)) looks like:
+```
+hysteria2://PASSWORD@YOUR-IP:443?obfs=salamander&obfs-password=OBFS-PASS&sni=your.domain#MyServer
+```
+
+KOX Shield understands both link formats — pass either one at install time or mix them in a single subscription.
+
+> 💡 More: [Reality](https://github.com/XTLS/REALITY) · [Hysteria2](https://v2.hysteria.network/)
 
 ---
 
@@ -112,7 +124,8 @@ wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-s
 
 The script will:
 - Install `xray-core`, `curl`, `jq`
-- Ask for your subscription URL or VLESS link
+- Install the `hysteria` client (for Hysteria2 servers) for your architecture
+- Ask for your subscription URL or a link (`vless://` or `hysteria2://`)
 - Show server selection if multiple servers are available
 - **Optionally remove Kvass / Shadowsocks / sing-box** (asks for confirmation first)
 - Configure transparent tunnel and iptables rules
@@ -132,7 +145,7 @@ Additionally sets up the Telegram Bot and runs a final tunnel verification.
 
 ## 🔄 Migrating from Kvass
 
-KOX Shield is a full replacement for Kvass with a more modern protocol (VLESS/Reality instead of Shadowsocks).
+KOX Shield is a full replacement for Kvass with more modern protocols (VLESS/Reality and Hysteria2 instead of Shadowsocks).
 
 The installer handles migration automatically:
 1. Detects installed Kvass, Shadowsocks, or sing-box
@@ -188,7 +201,7 @@ kox log-live            # Live log stream (Ctrl+C to stop)
 kox clear-log           # Clear all logs (Xray + bot)
 kox test                # Validate config.json
 kox stats               # Traffic statistics
-kox server              # VLESS server parameters
+kox server              # Current server parameters (VLESS or Hysteria2)
 
 # Domain category lists
 kox list-cats                   # Show all available categories (Telegram, YouTube, ...)
@@ -292,14 +305,14 @@ kox add my-blocked-site.com
 
 | | KOX Shield | Kvass |
 |--|---------|-------|
-| Protocol | VLESS + Reality | Shadowsocks |
+| Protocol | VLESS/Reality + Hysteria2 | Shadowsocks |
 | DPI protection | ✅ Invisible to ISP | ⚠️ Partial |
 | Install from router | ✅ `curl \| sh` | ✅ |
 | Install from PC | ✅ `xraykit.sh` | ✅ |
 | CLI console | ✅ `kox` | ✅ |
 | Telegram Bot | ✅ Built-in | ❌ |
 | Colored bot buttons | ✅ Bot API 9.4 | — |
-| Умное шифрование | ✅ Domain + IP | ✅ |
+| Smart encryption | ✅ Domain + IP | ✅ |
 | Auto-update | ✅ | ✅ |
 | Migrate from Kvass | ✅ Automatic | — |
 | Open source | ✅ | ✅ |
@@ -310,7 +323,7 @@ kox add my-blocked-site.com
 
 - **Router:** Keenetic (any model with Entware support)
 - **Entware:** [Installation guide](https://help.keenetic.com/hc/en-us/articles/360021214160)
-- **VLESS server:** Subscription at [kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register) or your own server
+- **Server:** Subscription at [kox.nonamenebula.ru/register](https://kox.nonamenebula.ru/register) or your own VLESS/Reality or Hysteria2 server
 
 ---
 
@@ -321,14 +334,19 @@ kox add my-blocked-site.com
 ├── bin/
 │   ├── kox              ← CLI management tool
 │   └── kox-bot          ← Telegram bot daemon
+├── sbin/
+│   └── hysteria         ← Hysteria2 client (for HY2 servers)
 ├── etc/
 │   ├── xray/
-│   │   ├── config.json  ← Xray config (VLESS + routing rules)
-│   │   └── kox.conf     ← Server params + bot token
+│   │   ├── config.json  ← Xray config (front-end + routing; kox-proxy outbound)
+│   │   └── kox.conf     ← Server params, protocol (KOX_PROTO) + bot token
+│   ├── hysteria/
+│   │   └── client.yaml  ← Hysteria2 client config (when HY2 is active)
 │   ├── ndm/netfilter.d/
 │   │   └── 99-kox-nat.sh  ← iptables rules (auto-applied on boot)
 │   └── init.d/
 │       ├── S24xray      ← Xray service (autostart)
+│       ├── S25hysteria  ← Hysteria2 client (starts when KOX_PROTO=hysteria2)
 │       └── S90kox-bot   ← Telegram bot service (autostart)
 └── var/log/
     ├── xray-err.log     ← Xray error log
