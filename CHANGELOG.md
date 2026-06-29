@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.06.30.04
+
+### 🛠 Fix: watchdog cron missing after upgrade
+
+- **`kox_install_watchdog_cron`**: `_upgrade-post` теперь добавляет
+  `* * * * * /opt/etc/kox-watchdog.sh`, если строка отсутствует (раньше
+  crond запускался, но watchdog в crontab не регистрировался).
+
 ## 2026.06.30.03
 
 ### 🧹 Рефакторинг: kox-lib, xraykit, dead code
