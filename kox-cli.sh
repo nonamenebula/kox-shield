@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.06.30.01"
+KOX_VERSION="2026.06.30.02"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -95,6 +95,21 @@ kox_hysteria_start() {
 kox_hysteria_stop() {
   [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" stop >/dev/null 2>&1
   killall hysteria 2>/dev/null
+}
+
+# Перезапуск Xray после правки config.json; в режиме HY2 проверяет hysteria.
+kox_reload_config() {
+  load_conf
+  kox_xray_ulimit
+  "$XRAY_INIT" restart >/dev/null 2>&1 || return 1
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
+    sleep 1
+    pgrep -f hysteria >/dev/null 2>&1 && \
+      netstat -ln 2>/dev/null | grep -q ":${HYSTERIA_SOCKS_PORT} " && return 0
+    kox_hysteria_start
+    sleep 1
+  fi
+  return 0
 }
 
 # Rebuild the kox-proxy outbound (by tag) as a socks outbound -> hysteria client.
@@ -607,7 +622,7 @@ kox_add_domain() {
 
   ok "Добавлен: ${W}${DOM}${N}"
   info "Перезапускаю Xray..."
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен — домен активен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен — домен активен" || fail "Ошибка перезапуска"
 }
 
 kox_del_domain() {
@@ -622,7 +637,7 @@ kox_del_domain() {
   grep -v "\"domain:${DOM}\"" "$CONF" > /tmp/kox-config.tmp && mv /tmp/kox-config.tmp "$CONF"
   ok "Удалён: ${W}${DOM}${N}"
   info "Перезапускаю Xray..."
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_add_ip() {
@@ -647,7 +662,7 @@ kox_add_ip() {
   ' "$CONF" > /tmp/kox-config.tmp && mv /tmp/kox-config.tmp "$CONF"
 
   ok "Добавлен IP: ${W}${IP}${N}"
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_del_ip() {
@@ -661,7 +676,7 @@ kox_del_ip() {
 
   grep -vF "\"${IP}\"" "$CONF" > /tmp/kox-config.tmp && mv /tmp/kox-config.tmp "$CONF"
   ok "Удалён IP: ${W}${IP}${N}"
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_list_domains() {
@@ -702,7 +717,9 @@ kox_clear_log() {
   printf '' > "$ERRLOG" 2>/dev/null || true
   printf '' > "$ACCLOG" 2>/dev/null || true
   printf '' > "/opt/var/log/kox-bot.log" 2>/dev/null || true
-  ok "Логи очищены"
+  printf '' > "/opt/var/log/hysteria.log" 2>/dev/null || true
+  printf '' > "/opt/var/log/kox-maintenance.log" 2>/dev/null || true
+  ok "Логи очищены (err, acc, bot, hysteria, maintenance)"
 }
 
 kox_backup() {
@@ -1396,7 +1413,7 @@ kox_list_load() {
   fi
 
   sep; info "Перезапускаю Xray..."; sep
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_list_remove() {
@@ -1448,7 +1465,7 @@ kox_list_remove() {
   fi
 
   sep; info "Перезапускаю Xray..."; sep
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_list_check() {
@@ -1495,14 +1512,16 @@ kox_list_update() {
   done
   printf '%s\n' "$REMOTE_VER" > "${KOX_LISTS_DIR}/LISTS_VERSION"
   ok "Обновлено до v${REMOTE_VER}"
-  "$XRAY_INIT" restart >/dev/null 2>&1 && ok "Xray перезапущен" || fail "Ошибка перезапуска"
+  kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
 kox_clear_log() {
   printf '' > "$ERRLOG" 2>/dev/null || true
   printf '' > "$ACCLOG" 2>/dev/null || true
   printf '' > "/opt/var/log/kox-bot.log" 2>/dev/null || true
-  ok "Логи очищены"
+  printf '' > "/opt/var/log/hysteria.log" 2>/dev/null || true
+  printf '' > "/opt/var/log/kox-maintenance.log" 2>/dev/null || true
+  ok "Логи очищены (err, acc, bot, hysteria, maintenance)"
 }
 
 kox_upgrade() {
