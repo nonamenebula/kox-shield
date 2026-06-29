@@ -11,7 +11,7 @@
 
 **KOX Shield — smart traffic encryption for Keenetic routers (VLESS/Reality + Hysteria2)**
 
-[![Version](https://img.shields.io/badge/version-2026.06.07-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2026.06.30.04-blue)](CHANGELOG.md)
 [![Telegram](https://img.shields.io/badge/Telegram-Channel-blue?logo=telegram)](https://t.me/PrivateProxyKox)
 [![Bot](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://t.me/kox_nonamenebula_bot)
 [![Site](https://img.shields.io/badge/🛡️-kox.nonamenebula.ru-blue)](https://kox.nonamenebula.ru/register)
@@ -37,6 +37,8 @@
 | ⚡ **VLESS + Reality** | Modern protocol — invisible to ISP and DPI |
 | 🚀 **Hysteria2 (QUIC)** | Fast UDP protocol with Salamander obfuscation — stable where TCP is throttled |
 | 🔁 **Both protocols in one subscription** | A subscription can mix VLESS and Hysteria2; the router switches between them correctly |
+| 🌐 **Server switching** | Switch VPN servers from the bot with ping and auto-rollback |
+| 🛡️ **Failover on outage** | Watchdog checks Xray and Hysteria2; on failure — switch-auto, iptables removed |
 | 📱 **Telegram Bot** | Full router management from Telegram |
 | 💻 **KOX Console** | Router CLI — `kox status`, `kox add`, `kox list`... |
 | 🔄 **Auto-update** | Daily subscription parameter refresh |
@@ -123,18 +125,16 @@ wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-s
 > **Requirements:** Keenetic router with [Entware](https://help.keenetic.com/hc/en-us/articles/360021214160) installed
 
 The script will:
-- Install `xray-core`, `curl`, `jq`
+- Install `xray-core`, `curl`, `jq`, `cron`, `iptables`
 - Install the `hysteria` client (for Hysteria2 servers) for your architecture
 - Ask for your subscription URL or a link (`vless://` or `hysteria2://`)
 - Show server selection if multiple servers are available
 - **Optionally remove Kvass / Shadowsocks / sing-box** (asks for confirmation first)
-- Configure transparent tunnel and iptables rules
+- Configure transparent tunnel and iptables rules (ports 80/443 only)
+- Install watchdog (every minute) and maintenance (04:05 — Xray + Hysteria2)
 - Install the `kox` CLI
 
-### Method 2: From Mac / Linux PC (advanced)
-
-```bash
-### Option 2: From Mac/Linux PC
+### Method 2: From Mac / Linux PC
 
 `xraykit.sh` is a thin SSH wrapper that runs the official `install.sh` from GitHub
 (VLESS + Hysteria2). Requires `curl`, `sshpass`, and the router root password.
@@ -145,10 +145,7 @@ chmod +x xraykit.sh
 ./xraykit.sh
 ```
 
-Prefer **Option 1** (install directly on the router).
-```
-
-Additionally sets up the Telegram Bot and runs a final tunnel verification.
+Prefer **Method 1** (install directly on the router).
 
 ---
 
@@ -193,7 +190,7 @@ After installation the `kox` command is available on the router:
 kox status              # VPN, Xray, iptables status
 kox on                  # Enable VPN
 kox off                 # Disable VPN (Xray keeps running, traffic goes direct)
-kox restart             # Restart Xray
+kox restart             # Restart Xray + Hysteria2
 
 # Domains & IPs
 kox add example.com     # Add domain to tunnel
@@ -221,11 +218,17 @@ kox list-remove all             # Remove all categories
 kox list-check                  # Check for list updates on GitHub
 kox list-update                 # Download and apply updated lists
 
-# Updates
+# Updates & servers
+kox sub set <URL>       # Set subscription URL
+kox sub get             # Show current subscription URL
 kox update-sub          # Update server parameters from subscription
+kox servers             # List servers from subscription with ping
+kox switch <N>          # Switch to server #N (with verification and rollback)
+kox switch-auto         # Auto-switch to first working server
 kox cron-on             # Enable auto-update (daily at 04:00)
 kox cron-off            # Disable auto-update
 kox upgrade             # Check for and install KOX Shield updates
+kox upgrade --force     # Upgrade without confirmation (used by bot)
 
 # Backups
 kox backup              # Backup config.json
@@ -233,11 +236,17 @@ kox restore [file]      # Restore from backup
 
 # Telegram Bot
 kox bot                 # Bot status
+kox bot-setup           # First-time setup wizard (token + admin ID)
 kox admin set <ID>      # Set Telegram administrator
 kox admin show          # Show current administrator
 
+# Cleanup
+kox clean-legacy        # Find Kvass, Shadowsocks, SOCKS interfaces
+kox clean-legacy --force  # Remove without confirmation
+
 # Help
 kox help                # List all commands
+kox watchdog-log        # Watchdog log (auto-recovery on failure)
 ```
 
 ---
@@ -268,7 +277,22 @@ Manage your router from Telegram without SSH:
 - ✅ Typing animation for long operations
 - ✅ `/` command menu in Telegram
 - ✅ Admin-only — all other users are silently ignored
-- ✅ Bot traffic routes through VPN (not blocked by ISP)
+- ✅ Bot traffic routes through VPN; on failure — direct access (auto-fallback)
+- 🔔 Notifications about KOX and domain list updates
+
+### Server switching
+
+Tap **🌐 Servers → 🔀 Switch server** in the bot, or use the CLI:
+
+```bash
+kox servers       # list with ping and [VLESS]/[HY2] badges
+kox switch 3      # switch to server #3
+kox switch-auto   # auto-switch to first working server
+```
+
+- 🟢 < 50 ms · 🟡 < 120 ms · 🟠 < 250 ms · 🔴 high · ⚫ no response
+- ✅ — current active server
+- **Auto-rollback**: if the tunnel fails on a new server — config is restored automatically
 
 ### Bot Setup
 
@@ -280,6 +304,7 @@ Manage your router from Telegram without SSH:
 ```
 KOX_BOT_TOKEN="1234567890:AAF..."
 KOX_ADMIN_ID="123456789"
+KOX_SUB_URL="https://kox.nonamenebula.ru/c/YOUR_TOKEN"
 ```
 
 **4.** Start the bot:
@@ -289,21 +314,44 @@ KOX_ADMIN_ID="123456789"
 
 ---
 
-## 📋 Built-in Domain List
+---
 
-| Category | Services |
-|----------|----------|
-| 📹 Video | YouTube, TikTok, Twitch, Netflix |
-| 💬 Messengers | Telegram, WhatsApp, Signal, Viber, Discord |
-| 📱 Social | Instagram, Facebook, Twitter/X, LinkedIn, Reddit |
-| 🎵 Music | Spotify |
-| 🤖 AI | ChatGPT, Claude, Gemini, Copilot |
-| 🎮 Gaming | Steam |
-| 💻 Dev tools | GitHub, npm, Docker |
-| 📚 Other | Wikipedia, Medium, Notion, Figma, Zoom, ProtonMail |
-| 📰 Torrents | Rutracker, Rutor |
+## 🛡️ Failover on VPN outage
 
-Add any site with one command:
+**Key KOX Shield behavior:** if VPN stops working — internet does not go down.
+
+How it works:
+1. **iptables** intercepts only **ports 80 and 443** (HTTP/HTTPS) — not all TCP
+2. **Watchdog** runs **every minute** and checks:
+   - Xray process and port 10808
+   - In Hysteria2 mode — `hysteria` client and SOCKS `127.0.0.1:11888`
+   - iptables rules are applied
+3. If VPN is broken — watchdog **removes iptables**, traffic goes direct
+4. Watchdog restarts Xray (+ Hysteria2 if needed) or runs `switch-auto`
+5. **Maintenance** at **04:05** restarts Xray and Hysteria2, rotates logs
+6. `kox off` / ❌ button in bot — instantly disables VPN, internet works
+
+```bash
+kox off              # Disable VPN (direct internet, Xray keeps running)
+kox on               # Re-enable VPN
+kox watchdog-log     # View watchdog log
+```
+
+---
+
+## 📋 Domain categories
+
+KOX Shield ships with **30 categories** of domains and IP ranges:
+
+```bash
+kox list-cats          # view all categories
+kox list-load youtube  # add YouTube to tunnel
+kox list-load all      # add everything at once
+```
+
+See the full category table in [README.md](README.md) (Russian).
+
+Add any site manually:
 ```bash
 kox add my-blocked-site.com
 ```
@@ -316,6 +364,9 @@ kox add my-blocked-site.com
 |--|---------|-------|
 | Protocol | VLESS/Reality + Hysteria2 | Shadowsocks |
 | DPI protection | ✅ Invisible to ISP | ⚠️ Partial |
+| Failover on VPN outage | ✅ Watchdog + switch-auto | ❌ |
+| Server switching from bot | ✅ With ping and auto-rollback | — |
+| Update notifications | ✅ | — |
 | Install from router | ✅ `curl \| sh` | ✅ |
 | Install from PC | ✅ `xraykit.sh` | ✅ |
 | CLI console | ✅ `kox` | ✅ |
@@ -346,6 +397,9 @@ kox add my-blocked-site.com
 ├── sbin/
 │   └── hysteria         ← Hysteria2 client (for HY2 servers)
 ├── etc/
+│   ├── kox-lib.sh       ← Shared library (URI parse, validation, hysteria yaml)
+│   ├── kox-watchdog.sh  ← Watchdog (cron every minute)
+│   ├── kox-maintenance.sh ← Daily maintenance (04:05)
 │   ├── xray/
 │   │   ├── config.json  ← Xray config (front-end + routing; kox-proxy outbound)
 │   │   └── kox.conf     ← Server params, protocol (KOX_PROTO) + bot token
@@ -359,26 +413,29 @@ kox add my-blocked-site.com
 │       └── S90kox-bot   ← Telegram bot service (autostart)
 └── var/log/
     ├── xray-err.log     ← Xray error log
-    └── kox-bot.log      ← Bot log
+    ├── xray-acc.log     ← Xray access log (rotated by maintenance)
+    ├── kox-bot.log      ← Bot log
+    ├── kox-watchdog.log ← Watchdog log
+    └── kox-maintenance.log ← Daily maintenance log
 ```
 
 ---
 
 ## ⬆️ Updating KOX Shield
 
-### Automatically (recommended)
+### Via Telegram bot
 
-Starting from version `2026.04.13`, the console has a built-in update command:
+Send `/update` or enable auto-update in bot settings.
+
+### Via console
 
 ```bash
 kox upgrade
 ```
 
-It checks the version on GitHub, shows the changelog, and asks for confirmation before downloading and installing new script versions.
+Checks the version on GitHub, shows the changelog, and asks for confirmation.
 
----
-
-### Manually (for users on the first version without `kox upgrade`)
+### Manually (for very old versions without `kox upgrade`)
 
 If you have an old version and the `kox upgrade` command doesn't exist yet — just update the console with one command via SSH (port 222):
 
@@ -410,6 +467,21 @@ kox add site.com   # Xray restarts automatically
 kox off   # Traffic goes direct, Xray keeps running
 kox on    # Re-enable
 ```
+
+**Q: How to switch servers?**
+
+In the bot: **🌐 Servers → 🔀 Switch server**. Or via CLI:
+```bash
+kox servers       # list with ping
+kox switch 3      # switch to server #3
+kox switch-auto   # auto-switch to first working
+```
+
+**Q: How to set subscription URL?**
+```bash
+kox sub set https://kox.nonamenebula.ru/c/YOUR_TOKEN
+```
+Or send `/sub URL` in the bot.
 
 **Q: How to update server parameters?**
 ```bash
