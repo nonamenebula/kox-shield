@@ -1,5 +1,23 @@
 # CHANGELOG — KOX Shield
 
+## 2026.06.30.03
+
+### 🧹 Рефакторинг: kox-lib, xraykit, dead code
+
+- **`kox-lib.sh`**: общая библиотека (URI parse, validation, kox.conf, hysteria yaml,
+  `kox_show_server_info`). Подключается из CLI, бота и watchdog — без тройного
+  дублирования кода.
+- **`xraykit.sh`**: переписан (~150 строк) — только SSH + официальный `install.sh`
+  с GitHub. Удалено ~2000 строк устаревшего embedded CLI/bot без HY2.
+- **`kox server` / меню серверов в боте**: показывают `KOX_PROTO` и реальный
+  `KOX_SERVER` из kox.conf (не 127.0.0.1 в режиме HY2).
+- **Dead code**: удалены `h_server()`, дубликат `kox_clear_log`, дубликат case
+  `clear-log`.
+- **Validation**: `kox add` / бот проверяют домены и IP/CIDR перед записью в JSON.
+- **`kox sub set`**: безопасная запись через `kox_conf_set` (без sed-инъекций).
+- **`install.sh`**: подписка с hysteria2; `_apply-uri` после установки для HY2.
+- **Бот**: кнопка «Рестарт VPN»; docs: watchdog каждую минуту.
+
 ## 2026.06.30.02
 
 ### 🛡 Защита flash + доработки стабильности HY2

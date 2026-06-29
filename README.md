@@ -108,7 +108,10 @@ wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-s
 - Установит watchdog — автовосстановление при сбое Xray
 - Установит `kox` CLI для управления
 
-### Способ 2: С компьютера Mac/Linux (расширенный)
+### Способ 2: С компьютера Mac/Linux
+
+`xraykit.sh` — тонкая обёртка: SSH на роутер + официальный `install.sh` с GitHub
+(VLESS + Hysteria2). Нужны `curl`, `sshpass` и пароль root Entware.
 
 ```bash
 curl -O https://raw.githubusercontent.com/nonamenebula/kox-shield/main/xraykit.sh
@@ -116,7 +119,7 @@ chmod +x xraykit.sh
 ./xraykit.sh
 ```
 
-Дополнительно настроит Telegram Bot и проведёт финальную проверку туннеля.
+Рекомендуемый способ — **Способ 1** (установка прямо на роутере).
 
 ---
 
@@ -294,7 +297,7 @@ KOX_SUB_URL="https://kox.nonamenebula.ru/c/YOUR_TOKEN"
 
 Как это работает:
 1. **iptables** перехватывает только **порты 80 и 443** (HTTP/HTTPS) — не весь TCP
-2. **Watchdog** запускается каждые 5 минут и проверяет:
+2. **Watchdog** запускается **каждую минуту** и проверяет:
    - Работает ли процесс Xray
    - Слушает ли порт 10808
    - Применены ли iptables правила
@@ -381,7 +384,7 @@ kox list-load all      # добавить всё сразу
 │   ├── xray-err.log             ← Логи Xray
 │   ├── kox-bot.log              ← Логи бота
 │   └── kox-watchdog.log         ← Лог watchdog
-└── etc/kox-watchdog.sh          ← Watchdog (cron 5 мин)
+└── etc/kox-watchdog.sh          ← Watchdog (cron каждую минуту)
 ```
 
 ---

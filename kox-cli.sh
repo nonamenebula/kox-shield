@@ -2,7 +2,11 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.06.30.02"
+KOX_VERSION="2026.06.30.03"
+
+KOX_LIB="/opt/etc/kox-lib.sh"
+[ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
+[ -f "$KOX_LIB" ] && . "$KOX_LIB"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -40,48 +44,9 @@ kox_xray_start() {
   fi
 }
 
-# ── Protocol-agnostic URI helpers (vless / hysteria2|hy2) ─────────────
-# Subscription lines may be vless:// (Reality) or hysteria2://|hy2:// (QUIC).
-# Xray is always the transparent front-end; the kox-proxy outbound is
-# rebuilt per protocol: VLESS -> native vless outbound; Hysteria2 ->
-# socks outbound to the local hysteria client (127.0.0.1:HYSTERIA_SOCKS_PORT).
+# ── Protocol-agnostic URI (kox-lib.sh) + hysteria/xray helpers ─────────
 
-# Match both vless:// and hysteria2://|hy2:// at line start
-KOX_URI_GREP='^(vless|hysteria2|hy2)://'
-
-uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
-uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
-uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
-uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
-uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
-uri_remark() { printf '%s' "$1" | sed -n 's/.*#//p'; }
-# Query param from the ?...#  part (works for hy2 links)
-uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
-
-# Write hysteria client.yaml from a hysteria2:// URI
-kox_hysteria_write_conf() {
-  local URI="$1" AUTH HOST PORT SNI OBFS OBFSP INSECURE
-  AUTH=$(uri_userinfo "$URI")
-  HOST=$(uri_host "$URI")
-  PORT=$(uri_port "$URI"); [ -z "$PORT" ] && PORT=443
-  SNI=$(uri_qparam "$URI" sni)
-  OBFS=$(uri_qparam "$URI" obfs)
-  OBFSP=$(uri_qparam "$URI" obfs-password)
-  INSECURE=$(uri_qparam "$URI" insecure)
-  mkdir -p "$(dirname "$HYSTERIA_CONF")"
-  {
-    printf 'server: %s:%s\n' "$HOST" "$PORT"
-    printf 'auth: %s\n' "$AUTH"
-    printf 'tls:\n'
-    [ -n "$SNI" ] && printf '  sni: %s\n' "$SNI"
-    { [ "$INSECURE" = "1" ] || [ "$INSECURE" = "true" ]; } && printf '  insecure: true\n'
-    if [ -n "$OBFS" ]; then
-      printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$OBFS" "$OBFS" "$OBFSP"
-    fi
-    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
-    printf 'fastOpen: true\n'
-  } > "$HYSTERIA_CONF"
-}
+# Write hysteria client.yaml — kox_hysteria_write_conf() in kox-lib.sh
 
 kox_hysteria_start() {
   if [ -x "$HYSTERIA_INIT" ]; then
@@ -145,17 +110,8 @@ kox_proxy_set_vless() {
   [ -s "$TMP" ] && mv "$TMP" "$CONF"
 }
 
-# Global kox.conf setter (functions below also define a local one; harmless).
-_kox_conf_set() {
-  local K="$1" V="$2"
-  if [ ! -f "$KOXCONF" ]; then
-    printf '%s="%s"\n' "$K" "$V" > "$KOXCONF"
-  elif grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
-  else
-    printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
-  fi
-}
+# kox.conf setter — kox_conf_set() in kox-lib.sh
+_kox_conf_set() { kox_conf_set "$1" "$2" "$KOXCONF"; }
 
 # Apply a subscription URI (vless or hysteria2) to the active config.
 # Updates kox-proxy outbound + kox.conf (KOX_PROTO and fields). Does NOT restart.
@@ -185,7 +141,7 @@ kox_apply_server_uri() {
     PBK=$(printf '%s'  "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
     SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
     FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
-    SPX=$(_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
+    SPX=$(koxkox_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
     [ -z "$SPX" ] && SPX="/"
     kox_hysteria_stop
     kox_proxy_set_vless "$HOST" "$PORT" "$UUID" "$FLOW" "$SNI" "$PBK" "$SID" "$FP" "$SPX"
@@ -216,6 +172,18 @@ kox_patch_s24xray() {
   mv /tmp/kox-s24xray.new "$XRAY_INIT"
   chmod +x "$XRAY_INIT" 2>/dev/null
   return 0
+}
+
+kox_install_kox_lib() {
+  LIB="/opt/etc/kox-lib.sh"
+  RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
+  if [ -f "$LIB" ] && grep -q 'kox-lib.sh' "$LIB" 2>/dev/null; then
+    chmod +x "$LIB" 2>/dev/null
+    return 0
+  fi
+  curl -fsSL --max-time 30 "${RAW}/kox-lib.sh" -o "$LIB" 2>/dev/null \
+    && [ -s "$LIB" ] && chmod +x "$LIB" && return 0
+  return 1
 }
 
 kox_install_maintenance_script() {
@@ -355,6 +323,7 @@ kox_upgrade_post() {
     warn "Не удалось пропатчить S24xray — добавьте ulimit вручную"
   fi
   kox_ensure_crond 2>/dev/null
+  kox_install_kox_lib 2>/dev/null && ok "kox-lib.sh установлен" || warn "kox-lib.sh не установлен"
   kox_install_maintenance_cron 2>/dev/null && \
     ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray)" || \
     warn "Не удалось добавить cron kox-maintenance"
@@ -392,9 +361,9 @@ kox_help() {
   printf "  ${G}kox status${N}           — статус Xray и туннеля\n"
   printf "  ${G}kox on${N}               — включить VPN (iptables)\n"
   printf "  ${G}kox off${N}              — выключить VPN (iptables)\n"
-  printf "  ${G}kox restart${N}          — перезапустить Xray\n"
+  printf "  ${G}kox restart${N}          — перезапустить VPN (Xray + Hysteria2)\n"
   printf "  ${G}kox test${N}             — проверить конфиг Xray\n"
-  printf "  ${G}kox server${N}           — инфо о VLESS сервере\n"
+  printf "  ${G}kox server${N}           — инфо о текущем сервере (VLESS/HY2)\n"
   printf "  ${G}kox stats${N}            — статистика трафика\n\n"
   printf "  ${G}kox add <домен>${N}      — добавить домен в туннель\n"
   printf "  ${G}kox del <домен>${N}      — удалить домен из туннеля\n"
@@ -566,24 +535,33 @@ kox_test() {
 kox_server() {
   kox_banner
   load_conf
-  info "${W}Информация о VLESS сервере:${N}"
+  _si=$(kox_show_server_info "$KOXCONF" "$CONF")
+  _proto=$(printf '%s\n' "$_si" | sed -n 's/^PROTO=//p')
+  _srv=$(printf '%s\n' "$_si" | sed -n 's/^SRV=//p')
+  _port=$(printf '%s\n' "$_si" | sed -n 's/^PORT=//p')
+  _auth=$(printf '%s\n' "$_si" | sed -n 's/^AUTH=//p')
+  _sni=$(printf '%s\n' "$_si" | sed -n 's/^SNI=//p')
+  _flow=$(printf '%s\n' "$_si" | sed -n 's/^FLOW=//p')
+  _sub=$(printf '%s\n' "$_si" | sed -n 's/^SUB=//p')
+  info "${W}Текущий сервер (${_proto}):${N}"
   sep
-  if [ -n "${KOX_SERVER:-}" ]; then
-    printf "  Сервер:    ${W}%s${N}\n" "$KOX_SERVER"
-    printf "  Порт:      ${W}%s${N}\n" "${KOX_PORT:-443}"
-    printf "  UUID:      ${W}%s${N}\n" "${KOX_UUID:-неизвестно}"
-    printf "  SNI:       ${W}%s${N}\n" "${KOX_SNI:-}"
-    printf "  Flow:      ${W}%s${N}\n" "${KOX_FLOW:-}"
-    [ -n "${KOX_SUB_URL:-}" ] && printf "  Подписка:  ${W}%s${N}\n" "$KOX_SUB_URL"
+  printf "  Протокол:  ${W}%s${N}\n" "${_proto:-vless}"
+  printf "  Сервер:    ${W}%s${N}\n" "${_srv:-неизвестно}"
+  printf "  Порт:      ${W}%s${N}\n" "${_port:-443}"
+  if [ "${_proto:-vless}" = "hysteria2" ]; then
+    printf "  Auth:      ${W}%s${N}\n" "${_auth:-?}"
   else
-    SRV=$(grep -m1 '"address"' "$CONF" | sed 's/.*"address": *"\([^"]*\)".*/\1/')
-    PORT=$(grep -m1 '"port"' "$CONF" | sed 's/.*"port": *\([0-9]*\).*/\1/')
-    UUID=$(grep -m1 '"id"' "$CONF" | sed 's/.*"id": *"\([^"]*\)".*/\1/')
-    SNI=$(grep -m1 '"serverName"' "$CONF" | sed 's/.*"serverName": *"\([^"]*\)".*/\1/')
-    printf "  Сервер:    ${W}%s${N}\n" "${SRV:-неизвестно}"
-    printf "  Порт:      ${W}%s${N}\n" "${PORT:-443}"
-    printf "  UUID:      ${W}%s${N}\n" "${UUID:-неизвестно}"
-    printf "  SNI:       ${W}%s${N}\n" "${SNI:-}"
+    printf "  UUID:      ${W}%s${N}\n" "${_auth:-?}"
+    printf "  Flow:      ${W}%s${N}\n" "${_flow:-}"
+  fi
+  [ -n "$_sni" ] && printf "  SNI:       ${W}%s${N}\n" "$_sni"
+  [ -n "$_sub" ] && printf "  Подписка:  ${W}%s${N}\n" "$_sub"
+  if [ "${_proto:-vless}" = "hysteria2" ]; then
+    if pgrep -f hysteria >/dev/null 2>&1; then
+      ok "Hysteria2-клиент: запущен (socks 127.0.0.1:${HYSTERIA_SOCKS_PORT})"
+    else
+      warn "Hysteria2-клиент: не запущен"
+    fi
   fi
   sep
 }
@@ -601,7 +579,7 @@ kox_check_domain() {
 kox_add_domain() {
   DOM="${1:-}"
   [ -z "$DOM" ] && fail "Укажите домен: kox add example.com" && return 1
-
+  kox_validate_domain "$DOM" || { fail "Некорректный домен: ${DOM}"; return 1; }
   if grep -q "\"domain:${DOM}\"" "$CONF" 2>/dev/null; then
     warn "Домен ${W}${DOM}${N} уже в конфиге"
     return 0
@@ -643,7 +621,7 @@ kox_del_domain() {
 kox_add_ip() {
   IP="${1:-}"
   [ -z "$IP" ] && fail "Укажите IP/CIDR: kox add-ip 1.2.3.0/24" && return 1
-
+  kox_validate_ip_cidr "$IP" || { fail "Некорректный IP/CIDR: ${IP}"; return 1; }
   if grep -q "\"${IP}\"" "$CONF" 2>/dev/null; then
     warn "IP ${W}${IP}${N} уже в конфиге"
     return 0
@@ -1515,15 +1493,6 @@ kox_list_update() {
   kox_reload_config && ok "Xray перезапущен" || fail "Ошибка перезапуска"
 }
 
-kox_clear_log() {
-  printf '' > "$ERRLOG" 2>/dev/null || true
-  printf '' > "$ACCLOG" 2>/dev/null || true
-  printf '' > "/opt/var/log/kox-bot.log" 2>/dev/null || true
-  printf '' > "/opt/var/log/hysteria.log" 2>/dev/null || true
-  printf '' > "/opt/var/log/kox-maintenance.log" 2>/dev/null || true
-  ok "Логи очищены (err, acc, bot, hysteria, maintenance)"
-}
-
 kox_upgrade() {
   FORCE="${1:-}"
   GITHUB_RAW_UP="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
@@ -1619,6 +1588,16 @@ kox_upgrade() {
     ok "Watchdog обновлён (/opt/etc/kox-watchdog.sh)"
   else
     warn "Не удалось загрузить kox-watchdog.sh"
+  fi
+
+  # kox-lib.sh → /opt/etc/kox-lib.sh
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-lib.sh" -o /tmp/kox-upgrade-lib 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-lib ]; then
+    chmod +x /tmp/kox-upgrade-lib
+    mv /tmp/kox-upgrade-lib /opt/etc/kox-lib.sh
+    ok "kox-lib обновлён (/opt/etc/kox-lib.sh)"
+  else
+    warn "Не удалось загрузить kox-lib.sh"
   fi
 
   # kox-maintenance.sh → /opt/etc/kox-maintenance.sh
@@ -1766,16 +1745,6 @@ _fetch_servers() {
   done
 }
 
-# Decode URL-encoded remark for display.
-# Inside single quotes, shell does no expansion, so sed sees `\\x` (2 chars)
-# and produces literal `\x` (backslash + x) in output, which `printf "%b"`
-# then interprets as hex byte. Using more backslashes breaks the chain.
-_decode_remark() {
-  local ESC
-  ESC=$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\x/g')
-  printf "%b" "$ESC"
-}
-
 kox_servers() {
   sep
   info "${W}Серверы из подписки:${N}"
@@ -1789,7 +1758,7 @@ kox_servers() {
   while IFS='	' read -r IDX HOST PORT ENC_REMARK PING_MS URL; do
     local MARK=" " REMARK PROTO BADGE
     [ "$HOST" = "$CURRENT_SRV" ] && MARK="${G}✓${N}"
-    REMARK=$(_decode_remark "$ENC_REMARK")
+    REMARK=$(kox_decode_remark "$ENC_REMARK")
     if uri_is_hy "$URL"; then BADGE="${C}HY2${N}"; else BADGE="${C}VLESS${N}"; fi
     printf "  %s ${W}[%s]${N}  %s  ${W}(%s)${N}\n        ${C}%s:%s${N}  ping=${Y}%s${N} ms\n" \
       "$MARK" "$IDX" "$REMARK" "$BADGE" "$HOST" "$PORT" "$PING_MS"
@@ -1818,7 +1787,7 @@ kox_switch() {
   HOST=$(printf '%s' "$SRV_LINE"     | cut -f2)
   PORT=$(printf '%s' "$SRV_LINE"     | cut -f3)
   ENC_REMARK=$(printf '%s' "$SRV_LINE" | cut -f4)
-  REMARK=$(_decode_remark "$ENC_REMARK")
+  REMARK=$(kox_decode_remark "$ENC_REMARK")
   VLESS_URL=$(printf '%s' "$SRV_LINE" | cut -f6-)
 
   local CURRENT_SRV PROTO
@@ -1972,7 +1941,7 @@ kox_switch_auto() {
     [ "$QUIET" != "--quiet" ] && printf "${G}доступен${N}\n"
 
     ENC_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
-    REMARK=$(_decode_remark "$ENC_REMARK")
+    REMARK=$(kox_decode_remark "$ENC_REMARK")
     [ -z "$REMARK" ] && REMARK="$HOST"
 
     cp "$CONF" /tmp/kox-autoswitch-backup.json 2>/dev/null
@@ -2059,11 +2028,7 @@ case "$CMD" in
       set)
         [ -z "$SUBURL" ] && fail "Использование: kox sub set <URL>" && exit 1
         load_conf
-        if grep -q "^KOX_SUB_URL=" "$KOXCONF" 2>/dev/null; then
-          sed -i "s|^KOX_SUB_URL=.*|KOX_SUB_URL=\"${SUBURL}\"|" "$KOXCONF"
-        else
-          printf 'KOX_SUB_URL="%s"\n' "$SUBURL" >> "$KOXCONF"
-        fi
+        kox_conf_set KOX_SUB_URL "$SUBURL" "$KOXCONF"
         ok "URL подписки сохранён: ${W}${SUBURL}${N}"
         info "Теперь доступна: kox update-sub" ;;
       get)
@@ -2081,11 +2046,11 @@ case "$CMD" in
   list-update)   kox_list_update ;;
   upgrade)       kox_upgrade "$@" ;;
   _upgrade-post) kox_upgrade_post ;;
+  _apply-uri)    kox_apply_server_uri "$1"; kox_reload_config ;;
   servers)       kox_servers ;;
   switch)        kox_switch "$@" ;;
   switch-auto)   kox_switch_auto "$@" ;;
   clean-legacy)  kox_clean_legacy ;;
-  clear-log)     kox_clear_log ;;
   watchdog-log)
     WD_LOG="/opt/var/log/kox-watchdog.log"
     sep

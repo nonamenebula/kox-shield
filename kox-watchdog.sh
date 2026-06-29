@@ -6,6 +6,9 @@
 # — switch-auto использует кэш серверов если подписка недоступна
 # — возврат на основной сервер (KOX_PREFERRED_HOST + KOX_AUTO_RETURN)
 
+KOX_LIB="/opt/etc/kox-lib.sh"
+[ -f "$KOX_LIB" ] && . "$KOX_LIB"
+
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
 NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
@@ -25,7 +28,6 @@ HYSTERIA_CONF="/opt/etc/hysteria/client.yaml"
 HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
 HYSTERIA_SOCKS_PORT="11888"
 PROXY_TAG="kox-proxy"
-KOX_URI_GREP='^(vless|hysteria2|hy2)://'
 
 # Если юзер вручную выключил VPN — не трогать
 [ -f "$VPN_OFF_MARKER" ] && exit 0
@@ -73,41 +75,11 @@ kox_save_crash_log() {
   tail -25 "$ERRLOG" >> "$CRASHLOG" 2>/dev/null
 }
 
-# ── Protocol-agnostic URI helpers (mirrors kox-cli.sh) ────────────────
-uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
-uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
-uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
-uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
-uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
-uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
+# URI helpers + kox_conf_set + kox_hysteria_write_conf — kox-lib.sh
 
-wd_conf_set() {
-  K="$1"; V="$2"
-  if grep -q "^${K}=" "$KOXCONF" 2>/dev/null; then
-    sed -i "s|^${K}=.*|${K}=\"${V}\"|" "$KOXCONF"
-  else
-    printf '%s="%s"\n' "$K" "$V" >> "$KOXCONF"
-  fi
-}
+wd_conf_set() { kox_conf_set "$1" "$2" "$KOXCONF"; }
 
-wd_hysteria_write_conf() {
-  URI="$1"
-  H_AUTH=$(uri_userinfo "$URI"); H_HOST=$(uri_host "$URI")
-  H_PORT=$(uri_port "$URI"); [ -z "$H_PORT" ] && H_PORT=443
-  H_SNI=$(uri_qparam "$URI" sni); H_OBFS=$(uri_qparam "$URI" obfs)
-  H_OBFSP=$(uri_qparam "$URI" obfs-password); H_INSEC=$(uri_qparam "$URI" insecure)
-  mkdir -p "$(dirname "$HYSTERIA_CONF")"
-  {
-    printf 'server: %s:%s\n' "$H_HOST" "$H_PORT"
-    printf 'auth: %s\n' "$H_AUTH"
-    printf 'tls:\n'
-    [ -n "$H_SNI" ] && printf '  sni: %s\n' "$H_SNI"
-    { [ "$H_INSEC" = "1" ] || [ "$H_INSEC" = "true" ]; } && printf '  insecure: true\n'
-    [ -n "$H_OBFS" ] && printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$H_OBFS" "$H_OBFS" "$H_OBFSP"
-    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
-    printf 'fastOpen: true\n'
-  } > "$HYSTERIA_CONF"
-}
+wd_hysteria_write_conf() { kox_hysteria_write_conf "$1"; }
 
 wd_hysteria_start() {
   if [ -x "$HYSTERIA_INIT" ]; then "$HYSTERIA_INIT" restart >/dev/null 2>&1
