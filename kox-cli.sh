@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.06.07.01"
+KOX_VERSION="2026.06.30.01"
 
 CONF="/opt/etc/xray/config.json"
 KOXCONF="/opt/etc/xray/kox.conf"
@@ -203,11 +203,30 @@ kox_patch_s24xray() {
   return 0
 }
 
+kox_install_maintenance_script() {
+  MAINT="/opt/etc/kox-maintenance.sh"
+  if [ -f "$MAINT" ] && grep -q 'kox-maintenance' "$MAINT" 2>/dev/null; then
+    chmod +x "$MAINT" 2>/dev/null
+    return 0
+  fi
+  if [ -f "$(dirname "$0")/kox-maintenance.sh" ]; then
+    cp "$(dirname "$0")/kox-maintenance.sh" "$MAINT" 2>/dev/null && chmod +x "$MAINT" && return 0
+  fi
+  GITHUB_RAW_MAINT="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
+  curl -fsSL --max-time 30 "${GITHUB_RAW_MAINT}/kox-maintenance.sh" -o "$MAINT" 2>/dev/null \
+    && [ -s "$MAINT" ] && chmod +x "$MAINT" && return 0
+  return 1
+}
+
 kox_install_maintenance_cron() {
-  CRON_LINE='5 4 * * * ulimit -n 65535 2>/dev/null || true; /opt/etc/init.d/S24xray restart >>/opt/var/log/kox-xray-refresh.log 2>&1 # kox-xray-refresh'
-  crontab -l 2>/dev/null | grep -q 'kox-xray-refresh' && return 0
-  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab - 2>/dev/null || \
-    echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+  MAINT="/opt/etc/kox-maintenance.sh"
+  CRON_LINE="5 4 * * * ${MAINT} >> /opt/var/log/kox-maintenance.log 2>&1 # kox-maintenance"
+  kox_install_maintenance_script 2>/dev/null || return 1
+  TMP=/tmp/kox-cron.$$
+  crontab -l 2>/dev/null | grep -v 'kox-xray-refresh' | grep -v 'kox-maintenance' > "$TMP" 2>/dev/null || : > "$TMP"
+  echo "$CRON_LINE" >> "$TMP"
+  crontab "$TMP" 2>/dev/null || echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+  rm -f "$TMP"
 }
 
 kox_ensure_crond() {
@@ -322,8 +341,8 @@ kox_upgrade_post() {
   fi
   kox_ensure_crond 2>/dev/null
   kox_install_maintenance_cron 2>/dev/null && \
-    ok "Cron: ежедневный перезапуск Xray в 04:05 (kox-xray-refresh)" || \
-    warn "Не удалось добавить cron kox-xray-refresh"
+    ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray)" || \
+    warn "Не удалось добавить cron kox-maintenance"
   if [ -f "$KOXCONF" ] && ! grep -q '^KOX_FAILOVER_MINUTES=' "$KOXCONF" 2>/dev/null; then
     printf 'KOX_FAILOVER_MINUTES="3"\n' >> "$KOXCONF"
     ok "KOX_FAILOVER_MINUTES=3 (быстрое авто-переключение при сбое VPN)"
@@ -513,6 +532,10 @@ kox_restart() {
   kox_xray_ulimit
   "$XRAY_INIT" restart
   sleep 2
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! pgrep -f hysteria >/dev/null 2>&1; then
+    kox_hysteria_start
+    sleep 1
+  fi
   if pgrep xray >/dev/null 2>&1; then
     ok "Xray перезапущен успешно"
   else
@@ -1577,6 +1600,16 @@ kox_upgrade() {
     ok "Watchdog обновлён (/opt/etc/kox-watchdog.sh)"
   else
     warn "Не удалось загрузить kox-watchdog.sh"
+  fi
+
+  # kox-maintenance.sh → /opt/etc/kox-maintenance.sh
+  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-maintenance.sh" -o /tmp/kox-upgrade-maint 2>/dev/null \
+      && [ -s /tmp/kox-upgrade-maint ]; then
+    chmod +x /tmp/kox-upgrade-maint
+    mv /tmp/kox-upgrade-maint /opt/etc/kox-maintenance.sh
+    ok "Maintenance-скрипт обновлён (/opt/etc/kox-maintenance.sh)"
+  else
+    warn "Не удалось загрузить kox-maintenance.sh"
   fi
 
   # 99-kox-nat.sh — добавить guard pgrep xray если ещё нет

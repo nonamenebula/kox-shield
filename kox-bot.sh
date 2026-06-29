@@ -787,10 +787,24 @@ Xray работает, но трафик идёт напрямую."
 h_restart() {
   local CHAT="$1"
   send_typing "$CHAT"
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
+    bot_hysteria_start 2>/dev/null
+  fi
   "$XRAY_INIT" restart >/dev/null 2>&1
   sleep 2
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! pgrep -f hysteria >/dev/null 2>&1; then
+    bot_hysteria_start 2>/dev/null
+    sleep 1
+  fi
   if pgrep xray >/dev/null 2>&1; then
-    update_menu "$CHAT" "🔄 <b>Xray перезапущен успешно</b>"
+    if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && pgrep -f hysteria >/dev/null 2>&1; then
+      update_menu "$CHAT" "🔄 <b>VPN перезапущен</b>
+
+✅ Xray + Hysteria2"
+    else
+      update_menu "$CHAT" "🔄 <b>Xray перезапущен успешно</b>"
+    fi
   else
     update_menu "$CHAT" "❌ <b>Xray не запустился!</b>
 Нажмите 📝 Логи для диагностики."

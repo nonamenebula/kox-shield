@@ -1,5 +1,21 @@
 # CHANGELOG — KOX Shield
 
+## 2026.06.30.01
+
+### 🛠 Ежедневное падение Hysteria2 после cron 04:05
+
+- **Причина**: cron `kox-xray-refresh` в 04:05 перезапускал только `S24xray`, не
+  трогая `S25hysteria`. В режиме `KOX_PROTO=hysteria2` Xray зависит от локального
+  SOCKS на `127.0.0.1:11888`; после ночного сбоя или перезапуска Xray клиент
+  hysteria оставался мёртвым до ручного `kox restart`.
+- **`kox-maintenance.sh`**: новый скрипт ежедневного обслуживания — перезапускает
+  hysteria + xray и повторно поднимает hysteria, если она упала после restart Xray.
+- **Cron**: `kox-xray-refresh` заменён на `kox-maintenance` (04:05); при `kox upgrade`
+  старая строка cron удаляется автоматически.
+- **`kox-watchdog.sh`**: проверка hysteria2-клиента (процесс + порт 11888) каждую
+  минуту; после любого `kox_xray_restart` hysteria перезапускается в режиме HY2.
+- **`kox-bot.sh`**: кнопка «Перезапуск» в Telegram поднимает и Xray, и Hysteria2.
+
 ## 2026.06.07.01
 
 ### 🚀 Поддержка протокола Hysteria2 (vless + hysteria2 в одной подписке)
