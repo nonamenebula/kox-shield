@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.06.30.03"
+KOX_VERSION="2026.06.30.04"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -236,11 +236,20 @@ CRONINIT
     fi
   fi
   if pgrep crond >/dev/null 2>&1; then
-    ok "Cron (crond) запущен — watchdog каждую минуту"
+    ok "Cron (crond) запущен"
     return 0
   fi
   warn "crond не запущен — авто-watchdog и cron-задачи не работают"
   return 1
+}
+
+kox_install_watchdog_cron() {
+  WD="/opt/etc/kox-watchdog.sh"
+  CRON_LINE="* * * * * ${WD}"
+  [ -f "$WD" ] || return 1
+  crontab -l 2>/dev/null | grep -q 'kox-watchdog' && return 0
+  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab - 2>/dev/null || \
+    echo "$CRON_LINE" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
 }
 
 # Install hysteria binary + S25hysteria init (idempotent). Used on upgrade so
@@ -323,6 +332,8 @@ kox_upgrade_post() {
     warn "Не удалось пропатчить S24xray — добавьте ulimit вручную"
   fi
   kox_ensure_crond 2>/dev/null
+  kox_install_watchdog_cron 2>/dev/null && ok "Cron: watchdog каждую минуту" || \
+    warn "Не удалось добавить cron watchdog"
   kox_install_kox_lib 2>/dev/null && ok "kox-lib.sh установлен" || warn "kox-lib.sh не установлен"
   kox_install_maintenance_cron 2>/dev/null && \
     ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray)" || \
