@@ -134,9 +134,18 @@ The script will:
 ### Method 2: From Mac / Linux PC (advanced)
 
 ```bash
+### Option 2: From Mac/Linux PC
+
+`xraykit.sh` is a thin SSH wrapper that runs the official `install.sh` from GitHub
+(VLESS + Hysteria2). Requires `curl`, `sshpass`, and the router root password.
+
+```bash
 curl -O https://raw.githubusercontent.com/nonamenebula/kox-shield/main/xraykit.sh
 chmod +x xraykit.sh
 ./xraykit.sh
+```
+
+Prefer **Option 1** (install directly on the router).
 ```
 
 Additionally sets up the Telegram Bot and runs a final tunnel verification.

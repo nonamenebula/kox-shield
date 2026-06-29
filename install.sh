@@ -110,22 +110,19 @@ parse_subscription() {
   RAW=$(curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null | base64 -d 2>/dev/null || curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
   [ -z "$RAW" ] && fail "Не удалось загрузить подписку"
 
-  COUNT=$(printf '%s' "$RAW" | grep -c '^vless://' || echo 0)
+  COUNT=$(printf '%s' "$RAW" | grep -cE '^(vless|hysteria2|hy2)://' || echo 0)
   if [ "$COUNT" -eq 0 ]; then
-    fail "vless:// серверы не найдены в подписке"
+    fail "Серверы (vless/hysteria2) не найдены в подписке"
   fi
 
   if [ "$COUNT" -eq 1 ]; then
-    VLESS_URL=$(printf '%s' "$RAW" | grep '^vless://' | head -1)
-    parse_vless_url "$VLESS_URL"
-    ok "Сервер: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
+    SELECTED_URI=$(printf '%s' "$RAW" | grep -E '^(vless|hysteria2|hy2)://' | head -1)
+    _apply_selected_uri "$SELECTED_URI"
     return
   fi
 
-  # Несколько серверов — предлагаем выбор. Список делаем через временный файл,
-  # чтобы избежать subshell и неправильного i++ при пайпе через while.
   TMPLIST="/tmp/.kox-sublist.$$"
-  printf '%s\n' "$RAW" | grep '^vless://' > "$TMPLIST" 2>/dev/null
+  printf '%s\n' "$RAW" | grep -E '^(vless|hysteria2|hy2)://' > "$TMPLIST" 2>/dev/null
   COUNT=$(wc -l < "$TMPLIST" | tr -d ' ')
 
   printf "\n"
@@ -133,7 +130,8 @@ parse_subscription() {
   sep
   i=1
   while IFS= read -r line; do
-    HOST=$(printf '%s' "$line" | sed 's|vless://[^@]*@\([^:?#]*\).*|\1|')
+    HOST=$(printf '%s' "$line" | sed 's|^[a-z0-9]*://[^@]*@\([^:?#]*\).*|\1|')
+    PROTO=$(printf '%s' "$line" | grep -qE '^hysteria2://|^hy2://' && printf 'HY2' || printf 'VLESS')
     case "$line" in
       *\#*) NAME_RAW=${line##*\#} ;;
       *)    NAME_RAW="" ;;
@@ -144,7 +142,7 @@ parse_subscription() {
     else
       NAME="—"
     fi
-    printf "  ${W}%d${N}) %s  ${C}%s${N}\n" "$i" "$HOST" "$NAME"
+    printf "  ${W}%d${N}) [${PROTO}] %s  ${C}%s${N}\n" "$i" "$HOST" "$NAME"
     i=$((i+1))
   done < "$TMPLIST"
   sep
@@ -153,15 +151,40 @@ parse_subscription() {
   read_tty CHOICE
   [ -z "$CHOICE" ] && CHOICE=1
 
-  VLESS_URL=$(sed -n "${CHOICE}p" "$TMPLIST")
+  SELECTED_URI=$(sed -n "${CHOICE}p" "$TMPLIST")
   rm -f "$TMPLIST"
-  [ -z "$VLESS_URL" ] && fail "Неверный выбор: $CHOICE"
-  parse_vless_url "$VLESS_URL"
-  ok "Выбран сервер: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
+  [ -z "$SELECTED_URI" ] && fail "Неверный выбор: $CHOICE"
+  _apply_selected_uri "$SELECTED_URI"
 }
+
+_apply_selected_uri() {
+  SELECTED_URI="$1"
+  [ -f /opt/etc/kox-lib.sh ] && . /opt/etc/kox-lib.sh 2>/dev/null
+  if printf '%s' "$SELECTED_URI" | grep -q '^vless://'; then
+    VLESS_URL="$SELECTED_URI"
+    parse_vless_url "$VLESS_URL"
+    ok "Выбран VLESS: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
+  else
+    VLESS_HOST=$(uri_host "$SELECTED_URI")
+    VLESS_PORT=$(uri_port "$SELECTED_URI"); [ -z "$VLESS_PORT" ] && VLESS_PORT=443
+    VLESS_UUID=$(uri_userinfo "$SELECTED_URI")
+    VLESS_SNI=$(uri_qparam "$SELECTED_URI" sni)
+    VLESS_PBK="placeholder"
+    VLESS_SID=""
+    VLESS_FP="chrome"
+    VLESS_FLOW=""
+    ok "Выбран Hysteria2: ${W}${VLESS_HOST}:${VLESS_PORT}${N} (применится после установки CLI)"
+  fi
+}
+
+SELECTED_URI=""
 
 # ── Установка пакетов ─────────────────────────────────────────────────────────
 install_packages() {
+  info "Загружаю kox-lib.sh..."
+  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null \
+    && chmod +x /opt/etc/kox-lib.sh 2>/dev/null && ok "kox-lib.sh" || warn "kox-lib.sh не загружен"
+
   info "Обновляю список пакетов..."
   opkg update >/dev/null 2>&1 || warn "opkg update завершился с ошибкой"
 
@@ -549,6 +572,11 @@ WATCHDOG_FALLBACK
 
 # ── Загрузка kox CLI и бота с GitHub ─────────────────────────────────────────
 download_scripts() {
+  info "Загружаю kox-lib.sh..."
+  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh \
+    && chmod +x /opt/etc/kox-lib.sh && ok "kox-lib → /opt/etc/kox-lib.sh" || \
+    warn "Не удалось загрузить kox-lib.sh"
+
   info "Загружаю kox CLI с GitHub..."
   curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-cli.sh" -o "${BIN}/kox" && chmod +x "${BIN}/kox" || \
     fail "Не удалось загрузить kox CLI"
@@ -619,23 +647,27 @@ check_internet
 # 2. Получить URL подписки или VLESS URL
 printf "\n"
 sep
-printf " ${W}Настройка VLESS подключения${N}\n"
+printf " ${W}Настройка VPN подключения${N}\n"
 sep
 printf "\n"
-printf "  Введите ${W}URL подписки${N} (https://...) или ${W}VLESS URL${N} (vless://...):\n"
+printf "  Введите ${W}URL подписки${N} (https://...) или ссылку ${W}vless:// / hysteria2://${N}:\n"
 printf "\n"
 ask "→"
 read_tty USER_INPUT
 [ -z "$USER_INPUT" ] && fail "Ввод не может быть пустым"
 
 if printf '%s' "$USER_INPUT" | grep -q '^vless://'; then
+  SELECTED_URI="$USER_INPUT"
   parse_vless_url "$USER_INPUT"
   ok "VLESS URL принят: ${W}${VLESS_HOST}:${VLESS_PORT}${N}"
+elif printf '%s' "$USER_INPUT" | grep -qE '^(hysteria2|hy2)://'; then
+  SELECTED_URI="$USER_INPUT"
+  _apply_selected_uri "$USER_INPUT"
 elif printf '%s' "$USER_INPUT" | grep -q '^https\?://'; then
   SUB_URL="$USER_INPUT"
   parse_subscription "$SUB_URL"
 else
-  fail "Введите корректный URL подписки (https://...) или VLESS URL (vless://...)"
+  fail "Введите URL подписки (https://...) или vless:// / hysteria2://"
 fi
 
 # 3. Установка
@@ -662,6 +694,16 @@ download_scripts
 
 # 6. Запуск
 start_xray
+
+# 6b. Hysteria2: применить выбранный сервер через kox CLI
+if [ -n "$SELECTED_URI" ] && printf '%s' "$SELECTED_URI" | grep -qE '^(hysteria2|hy2)://'; then
+  if [ -x /opt/bin/kox ]; then
+    info "Применяю Hysteria2 сервер..."
+    /opt/bin/kox _apply-uri "$SELECTED_URI" 2>/dev/null && ok "Hysteria2 настроен" || \
+      warn "Не удалось применить hysteria2 — выполните: kox switch"
+    /opt/bin/kox restart 2>/dev/null || true
+  fi
+fi
 
 # 7. Итог
 show_result

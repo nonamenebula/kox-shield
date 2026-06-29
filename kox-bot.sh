@@ -3,7 +3,11 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.06.30.02"
+KOX_VERSION="2026.06.30.03"
+
+KOX_LIB="/opt/etc/kox-lib.sh"
+[ -f "$KOX_LIB" ] || KOX_LIB="/opt/etc/kox-lib.sh"
+[ -f "$KOX_LIB" ] && . "$KOX_LIB"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -30,42 +34,11 @@ CHECK_INTERVAL=21600  # 6 hours
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-# ── Hysteria2 / protocol-agnostic support (mirrors kox-cli.sh) ──────────────────
 HYSTERIA_BIN="/opt/sbin/hysteria"
 HYSTERIA_CONF="/opt/etc/hysteria/client.yaml"
 HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
 HYSTERIA_SOCKS_PORT="11888"
 PROXY_TAG="kox-proxy"
-# Match both vless:// and hysteria2://|hy2:// at line start
-KOX_URI_GREP='^(vless|hysteria2|hy2)://'
-
-uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
-uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
-uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
-uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
-uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
-uri_qparam() { printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^$2=" | head -1 | cut -d= -f2-; }
-
-bot_hysteria_write_conf() {
-  URI="$1"
-  H_AUTH=$(uri_userinfo "$URI"); H_HOST=$(uri_host "$URI")
-  H_PORT=$(uri_port "$URI"); [ -z "$H_PORT" ] && H_PORT=443
-  H_SNI=$(uri_qparam "$URI" sni); H_OBFS=$(uri_qparam "$URI" obfs)
-  H_OBFSP=$(uri_qparam "$URI" obfs-password); H_INSEC=$(uri_qparam "$URI" insecure)
-  mkdir -p "$(dirname "$HYSTERIA_CONF")"
-  {
-    printf 'server: %s:%s\n' "$H_HOST" "$H_PORT"
-    printf 'auth: %s\n' "$H_AUTH"
-    printf 'tls:\n'
-    [ -n "$H_SNI" ] && printf '  sni: %s\n' "$H_SNI"
-    { [ "$H_INSEC" = "1" ] || [ "$H_INSEC" = "true" ]; } && printf '  insecure: true\n'
-    if [ -n "$H_OBFS" ]; then
-      printf 'obfs:\n  type: %s\n  %s:\n    password: %s\n' "$H_OBFS" "$H_OBFS" "$H_OBFSP"
-    fi
-    printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$HYSTERIA_SOCKS_PORT"
-    printf 'fastOpen: true\n'
-  } > "$HYSTERIA_CONF"
-}
 
 bot_hysteria_start() {
   if [ -x "$HYSTERIA_INIT" ]; then
@@ -256,7 +229,7 @@ main_keyboard() {
        {"text":"🌐 Серверы →","callback_data":"servers_menu"}],
       [{"text":"✅ Вкл VPN","callback_data":"do_on"},
        {"text":"❌ Выкл VPN","callback_data":"confirm_off"}],
-      [{"text":"🔄 Рестарт Xray","callback_data":"confirm_restart"},
+      [{"text":"🔄 Рестарт VPN","callback_data":"confirm_restart"},
        {"text":"🔧 Тест конфига","callback_data":"test_config"}],
       [{"text":"📋 Домены и IP  →","callback_data":"domains_menu"},
        {"text":"🛠 Инструменты  →","callback_data":"tools_menu"}],
@@ -322,48 +295,49 @@ VPN туннель:  ${VPN_ST}
 Соединений:   <code>${CONN}</code>"
 }
 
-h_server() {
-  local CHAT="$1"
-  local SRV PORT UUID SNI FLOW
-  SRV=$(grep -m1 '"address"' "$CONF" | sed 's/.*"address": *"\([^"]*\)".*/\1/')
-  PORT=$(grep -m1 '"port"' "$CONF" | sed 's/.*"port": *\([0-9]*\).*/\1/')
-  UUID=$(grep -m1 '"id"' "$CONF" | sed 's/.*"id": *"\([^"]*\)".*/\1/')
-  SNI=$(grep -m1 '"serverName"' "$CONF" | sed 's/.*"serverName": *"\([^"]*\)".*/\1/')
-  FLOW=$(grep -m1 '"flow"' "$CONF" | sed 's/.*"flow": *"\([^"]*\)".*/\1/')
-  update_menu "$CHAT" "🌐 <b>VLESS сервер:</b>
-
-Адрес: <code>${SRV:-?}</code>
-Порт:  <code>${PORT:-443}</code>
-UUID:  <code>${UUID:-?}</code>
-SNI:   <code>${SNI:-}</code>
-Flow:  <code>${FLOW:-}</code>"
-}
-
-# ── Server menu: current info + switch option ──────────────────────────────
 h_servers_menu() {
   local CHAT="$1"
-  local SRV PORT UUID SNI SUB_URL
-  SRV=$(grep -m1 '"address"' "$CONF" | sed 's/.*"address": *"\([^"]*\)".*/\1/')
-  PORT=$(grep -m1 '"port"' "$CONF" | sed 's/.*"port": *\([0-9]*\).*/\1/')
-  UUID=$(grep -m1 '"id"' "$CONF" | sed 's/.*"id": *"\([^"]*\)".*/\1/')
-  SNI=$(grep -m1 '"serverName"' "$CONF" | sed 's/.*"serverName": *"\([^"]*\)".*/\1/')
+  local SUB_URL KBD _si _proto _srv _port _auth _sni _flow _hy
   [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
   SUB_URL="${KOX_SUB_URL:-}"
+  _si=$(kox_show_server_info "$KOXCONF" "$CONF")
+  _proto=$(printf '%s\n' "$_si" | sed -n 's/^PROTO=//p')
+  _srv=$(printf '%s\n' "$_si" | sed -n 's/^SRV=//p')
+  _port=$(printf '%s\n' "$_si" | sed -n 's/^PORT=//p')
+  _auth=$(printf '%s\n' "$_si" | sed -n 's/^AUTH=//p')
+  _sni=$(printf '%s\n' "$_si" | sed -n 's/^SNI=//p')
+  _flow=$(printf '%s\n' "$_si" | sed -n 's/^FLOW=//p')
+  _hy=""
+  if [ "${_proto:-vless}" = "hysteria2" ]; then
+    pgrep -f hysteria >/dev/null 2>&1 && _hy="✅ HY2-клиент запущен" || _hy="❌ HY2-клиент не запущен"
+  fi
 
-  local KBD
   if [ -n "$SUB_URL" ]; then
     KBD='{"inline_keyboard":[[{"text":"🔀 Сменить сервер из подписки","callback_data":"switch_list"}],[{"text":"◀️ Главное меню","callback_data":"menu"}]]}'
   else
     KBD='{"inline_keyboard":[[{"text":"◀️ Главное меню","callback_data":"menu"}]]}'
   fi
 
-  update_menu "$CHAT" "🌐 <b>Текущий VLESS сервер:</b>
+  local MSG="🌐 <b>Текущий сервер</b> [<code>${_proto:-vless}</code>]
 
-Адрес: <code>${SRV:-?}</code>
-Порт:  <code>${PORT:-443}</code>
-UUID:  <code>${UUID:-?}</code>
-SNI:   <code>${SNI:-}</code>
-Подписка: <code>${SUB_URL:-не задана}</code>" "$KBD"
+Адрес: <code>${_srv:-?}</code>
+Порт:  <code>${_port:-443}</code>"
+  if [ "${_proto:-vless}" = "hysteria2" ]; then
+    MSG="${MSG}
+Auth:  <code>${_auth:-?}</code>"
+  else
+    MSG="${MSG}
+UUID:  <code>${_auth:-?}</code>
+Flow:  <code>${_flow:-}</code>"
+  fi
+  MSG="${MSG}
+SNI:   <code>${_sni:-—}</code>"
+  [ -n "$_hy" ] && MSG="${MSG}
+${_hy}"
+  MSG="${MSG}
+Подписка: <code>${SUB_URL:-не задана}</code>"
+
+  update_menu "$CHAT" "$MSG" "$KBD"
 }
 
 # URL-decode %XX encoded string (handles UTF-8 / emoji, no python3 needed)
@@ -410,7 +384,9 @@ URL: <code>${SUB_URL}</code>" "$(back_keyboard)"
   fi
 
   local CURRENT_SRV
-  CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
+  [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+  CURRENT_SRV="${KOX_SERVER:-}"
+  [ -z "$CURRENT_SRV" ] && CURRENT_SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
 
   # Build server list with ping — save to file for callback use
   printf '' > /tmp/kox-servers.txt
@@ -600,7 +576,7 @@ h_do_switch() {
   if [ "$SEL_PROTO" = "hysteria2" ]; then
     # Hysteria: write client.yaml, start local socks, point kox-proxy at it.
     # Set KOX_PROTO BEFORE start — S25hysteria init gates on it.
-    bot_hysteria_write_conf "$VLESS_URL"
+    kox_hysteria_write_conf "$VLESS_URL"
     conf_set KOX_PROTO hysteria2
     bot_hysteria_start
     bot_proxy_set_socks || APPLY_OK=0
@@ -920,6 +896,10 @@ xray-err.log, xray-acc.log, kox-bot.log обнулены."
 
 h_add_domain() {
   local CHAT="$1" DOM="$2"
+  kox_validate_domain "$DOM" || {
+    update_menu "$CHAT" "❌ Некорректный домен: <code>${DOM}</code>"
+    return
+  }
   if grep -qF "\"domain:${DOM}\"" "$CONF" 2>/dev/null; then
     update_menu "$CHAT" "⚠️ Домен <code>${DOM}</code> уже в списке"
   elif grep -q "$DOMAIN_MARKER" "$CONF"; then
@@ -956,6 +936,10 @@ h_check_domain() {
 
 h_add_ip() {
   local CHAT="$1" IP="$2"
+  kox_validate_ip_cidr "$IP" || {
+    update_menu "$CHAT" "❌ Некорректный IP/CIDR: <code>${IP}</code>"
+    return
+  }
   if grep -qF "\"${IP}\"" "$CONF" 2>/dev/null; then
     update_menu "$CHAT" "⚠️ IP <code>${IP}</code> уже в конфиге"
   elif grep -q "$IP_MARKER" "$CONF"; then
@@ -1827,9 +1811,9 @@ while true; do
 
       confirm_restart)
         update_menu "$CHAT_ID" \
-          "⚠️ <b>Перезапустить Xray?</b>
+          "⚠️ <b>Перезапустить VPN?</b>
 
-VPN прервётся примерно на 2 секунды." \
+Xray + Hysteria2 (если активен) — перерыв ~2–3 сек." \
           "$(confirm_keyboard restart)"
         ;;
       do_restart)        h_restart "$CHAT_ID" ;;
