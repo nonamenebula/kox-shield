@@ -1,19 +1,48 @@
 #!/bin/sh
 # KOX Shield — ежедневное обслуживание (kox-maintenance, cron 04:05)
 # В режиме hysteria2 перезапускает и hysteria-клиент, и Xray.
+# Ротация логов — защита flash от неограниченного роста xray-acc.log.
 
 KOXCONF="/opt/etc/xray/kox.conf"
 XRAY_INIT="/opt/etc/init.d/S24xray"
 HYSTERIA_INIT="/opt/etc/init.d/S25hysteria"
+HYSTERIA_SOCKS_PORT="11888"
 VPN_OFF_MARKER="/tmp/kox-vpn-off"
 LOG="/opt/var/log/kox-maintenance.log"
+LOG_DIR="/opt/var/log"
 
 [ -f "$VPN_OFF_MARKER" ] && exit 0
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
 
+# Обрезать файл если больше max_kb (оставить хвост keep_kb)
+rotate_log() {
+  _f="$1"; _max_kb="$2"; _keep_kb="${3:-$2}"
+  [ -f "$_f" ] || return 0
+  _sz=$(wc -c < "$_f" 2>/dev/null | tr -d ' ')
+  [ -z "$_sz" ] && return 0
+  [ "$_sz" -le $((_max_kb * 1024)) ] && return 0
+  tail -c $((_keep_kb * 1024)) "$_f" > "${_f}.rot" 2>/dev/null \
+    && mv "${_f}.rot" "$_f" \
+    && log "rotated $(basename "$_f") (${_sz}B -> ~$((_keep_kb * 1024))B)"
+}
+
+hysteria_ok() {
+  pgrep -f hysteria >/dev/null 2>&1 && \
+    netstat -ln 2>/dev/null | grep -q ":${HYSTERIA_SOCKS_PORT} "
+}
+
 ulimit -n 65535 2>/dev/null || true
 [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
+
+# Ротация логов (до restart — меньше I/O во время работы VPN)
+rotate_log "${LOG_DIR}/xray-acc.log" 2048 512
+rotate_log "${LOG_DIR}/xray-err.log" 512 256
+rotate_log "${LOG_DIR}/hysteria.log" 512 256
+rotate_log "${LOG_DIR}/kox-bot.log" 512 256
+rotate_log "${LOG_DIR}/kox-update.log" 256 128
+rotate_log "${LOG_DIR}/xray-err.last-crash.log" 256 128
+rotate_log "$LOG" 256 64
 
 log "maintenance start proto=${KOX_PROTO:-vless}"
 
@@ -29,12 +58,13 @@ else
   log "S24xray missing"
 fi
 
-# После перезапуска Xray hysteria могла упасть — поднять снова
 if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
   sleep 2
-  if ! pgrep -f hysteria >/dev/null 2>&1; then
+  if ! hysteria_ok; then
     log "hysteria down after xray restart — starting"
     [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" start >> "$LOG" 2>&1
+    sleep 2
+    hysteria_ok && log "hysteria recovered" || log "hysteria still down"
   fi
 fi
 

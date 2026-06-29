@@ -65,6 +65,10 @@ kox_hysteria_ok() {
 
 kox_save_crash_log() {
   [ -s "$ERRLOG" ] || return 0
+  _cs=$(wc -c < "$CRASHLOG" 2>/dev/null | tr -d ' ')
+  if [ -n "$_cs" ] && [ "$_cs" -gt 131072 ] 2>/dev/null; then
+    tail -c 65536 "$CRASHLOG" > "${CRASHLOG}.tmp" 2>/dev/null && mv "${CRASHLOG}.tmp" "$CRASHLOG"
+  fi
   printf '\n--- %s watchdog ---\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$CRASHLOG"
   tail -25 "$ERRLOG" >> "$CRASHLOG" 2>/dev/null
 }

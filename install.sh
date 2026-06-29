@@ -519,21 +519,25 @@ WATCHDOG_FALLBACK
   fi
 
   # Ежедневное обслуживание (hysteria + xray в 04:05)
-  MAINT="/opt/etc/kox-maintenance.sh"
   if curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-maintenance.sh" -o "$MAINT" 2>/dev/null \
       && [ -s "$MAINT" ]; then
     chmod +x "$MAINT"
     ok "Maintenance-скрипт загружен ($MAINT)"
+  else
+    warn "Maintenance-скрипт не загружен — cron 04:05 не будет добавлен"
+    MAINT=""
   fi
-  CRON_MAINT="5 4 * * * ${MAINT} >> /opt/var/log/kox-maintenance.log 2>&1 # kox-maintenance"
-  TMP=/tmp/kox-cron-install.$$
-  crontab -l 2>/dev/null | grep -v 'kox-xray-refresh' | grep -v 'kox-maintenance' > "$TMP" 2>/dev/null || : > "$TMP"
-  if ! grep -q kox-maintenance "$TMP" 2>/dev/null; then
-    echo "$CRON_MAINT" >> "$TMP"
-    crontab "$TMP" 2>/dev/null || echo "$CRON_MAINT" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
-    ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray)"
+  if [ -n "$MAINT" ] && [ -x "$MAINT" ]; then
+    CRON_MAINT="5 4 * * * ${MAINT} >> /opt/var/log/kox-maintenance.log 2>&1 # kox-maintenance"
+    TMP=/tmp/kox-cron-install.$$
+    crontab -l 2>/dev/null | grep -v 'kox-xray-refresh' | grep -v 'kox-maintenance' > "$TMP" 2>/dev/null || : > "$TMP"
+    if ! grep -q kox-maintenance "$TMP" 2>/dev/null; then
+      echo "$CRON_MAINT" >> "$TMP"
+      crontab "$TMP" 2>/dev/null || echo "$CRON_MAINT" >> /opt/var/spool/cron/crontabs/root 2>/dev/null
+      ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray + ротация логов)"
+    fi
+    rm -f "$TMP"
   fi
-  rm -f "$TMP"
 
   # Символические ссылки для geo-данных
   if [ ! -f "/opt/usr/share/xray/geoip.dat" ] && [ -f "/opt/usr/share/xray-core/geoip.dat" ]; then

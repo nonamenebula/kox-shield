@@ -1,5 +1,18 @@
 # CHANGELOG — KOX Shield
 
+## 2026.06.30.02
+
+### 🛡 Защита flash + доработки стабильности HY2
+
+- **`kox-maintenance.sh`**: ежедневная ротация логов (`xray-acc.log` >2MB → 512KB,
+  hysteria/bot/err/crash — аналогично); проверка hysteria по процессу **и** порту 11888.
+- **`kox_reload_config`**: перезапуск Xray после правок config (домены, IP, списки)
+  с автоподъёмом hysteria в режиме HY2.
+- **`kox-watchdog.sh`**: ограничение роста `xray-err.last-crash.log` (128KB cap).
+- **`kox clear-log`**: очищает также hysteria и maintenance логи.
+- **`kox-bot.sh`**: синхронизирована версия с CLI (исправлено авто-обновление в боте).
+- **`install.sh`**: cron maintenance только если скрипт успешно загружен.
+
 ## 2026.06.30.01
 
 ### 🛠 Ежедневное падение Hysteria2 после cron 04:05
