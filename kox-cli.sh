@@ -141,7 +141,7 @@ kox_apply_server_uri() {
     PBK=$(printf '%s'  "$PARAMS" | grep -o 'pbk=[^&]*'  | cut -d= -f2)
     SID=$(printf '%s'  "$PARAMS" | grep -o 'sid=[^&]*'  | cut -d= -f2)
     FP=$(printf '%s'   "$PARAMS" | grep -o 'fp=[^&]*'   | cut -d= -f2)
-    SPX=$(koxkox_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
+    SPX=$(kox_decode_remark "$(printf '%s' "$PARAMS" | grep -o 'spx=[^&]*' | cut -d= -f2)")
     [ -z "$SPX" ] && SPX="/"
     kox_hysteria_stop
     kox_proxy_set_vless "$HOST" "$PORT" "$UUID" "$FLOW" "$SNI" "$PBK" "$SID" "$FP" "$SPX"
