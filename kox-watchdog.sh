@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX Watchdog v8
+# KOX Watchdog v9
 # — перезапускает xray при падении; при сбое — switch-auto на другой сервер
 # — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 3)
 # — после падения Xray — переключение без ожидания N минут
@@ -52,6 +52,15 @@ kox_xray_restart() {
   killall xray 2>/dev/null || true
   sleep 2
   kox_xray_start
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
+    sleep 1
+    wd_hysteria_start
+  fi
+}
+
+kox_hysteria_ok() {
+  pgrep -f hysteria >/dev/null 2>&1 && \
+    netstat -ln 2>/dev/null | grep -q ":${HYSTERIA_SOCKS_PORT} "
 }
 
 kox_save_crash_log() {
@@ -280,6 +289,25 @@ Iptables сняты — интернет напрямую.
         exit 0
       fi
     fi
+  fi
+fi
+
+# ── 1b. Hysteria2-клиент (режим KOX_PROTO=hysteria2) ─────────────────
+if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! kox_hysteria_ok; then
+  log "Hysteria2-клиент не работает — перезапускаю"
+  wd_hysteria_start
+  sleep 3
+  if kox_hysteria_ok; then
+    log "Hysteria2-клиент восстановлен"
+    if pgrep xray >/dev/null 2>&1 && ! kox_tunnel_ok; then
+      log "Hysteria OK, туннель нет — перезапуск Xray"
+      kox_xray_restart
+      sleep 3
+      sh "$NAT_SCRIPT" 2>/dev/null
+    fi
+  else
+    log "Hysteria2 не удалось запустить — switch-auto"
+    kox_watchdog_switch_auto "Hysteria2-клиент не запускается" || true
   fi
 fi
 
