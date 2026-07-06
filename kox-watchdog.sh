@@ -177,6 +177,7 @@ kox_watchdog_switch_auto() {
     printf '0\n' > "$XRAY_START_FAIL_FILE"
     rm -f "$XRAY_WAS_DOWN"
     sh "$NAT_SCRIPT" 2>/dev/null
+    sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
     log "switch-auto успешно: $NEW_SERVER"
     RETURN_NOTE=""
     [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && \
@@ -221,18 +222,25 @@ tg_notify() {
 if ! pgrep xray >/dev/null 2>&1; then
   touch "$XRAY_WAS_DOWN"
   log "Xray не работает — снимаю iptables"
-  iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
-  iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  if type kox_iptables_remove_xray_nat >/dev/null 2>&1; then
+    kox_iptables_remove_xray_nat
+  else
+    iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+    ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+  fi
   kox_save_crash_log
   if [ -f "$XRAY_INIT" ] || [ -x /opt/sbin/xray ]; then
     kox_xray_start
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
       sh "$NAT_SCRIPT" 2>/dev/null
+      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
       log "Xray перезапущен, iptables восстановлен"
       if ! kox_tunnel_ok; then
         log "Xray запущен, но туннель не отвечает — пробую switch-auto"
@@ -250,12 +258,18 @@ if ! pgrep xray >/dev/null 2>&1; then
         kox_watchdog_switch_auto "Xray не запускается на текущем сервере" || true
       fi
       if ! pgrep xray >/dev/null 2>&1; then
-        iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
-        iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-        iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-        ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-        ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-        ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+        if type kox_iptables_remove_xray_nat >/dev/null 2>&1; then
+          kox_iptables_remove_xray_nat
+        else
+          iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+          iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+          iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+          ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+          ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+          ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+          iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+          ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+        fi
         tg_notify "❌ <b>KOX Shield — Xray не запускается</b>
 
 Перезапуск и смена сервера не помогли.
@@ -280,6 +294,7 @@ if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! kox_hysteria_ok; then
       kox_xray_restart
       sleep 3
       sh "$NAT_SCRIPT" 2>/dev/null
+      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
     fi
   else
     log "Hysteria2 не удалось запустить — switch-auto"
@@ -295,6 +310,7 @@ if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
   sleep 5
   if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
     sh "$NAT_SCRIPT" 2>/dev/null
+    sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
     log "Xray перезапущен после сбоя порта 10808"
     if ! kox_tunnel_ok; then
       log "Порт 10808 OK, туннель нет — switch-auto"
@@ -320,6 +336,7 @@ if pgrep xray >/dev/null 2>&1 && \
   kox_xray_restart
   sleep 5
   sh "$NAT_SCRIPT" 2>/dev/null
+  sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
   if kox_acc_log_stale; then
     log "После перезапуска access-лог всё ещё молчит — switch-auto"
     kox_watchdog_switch_auto "Xray завис (access-лог)" || true
@@ -334,6 +351,7 @@ fi
 if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
   log "iptables правила пропали — восстанавливаю"
   sh "$NAT_SCRIPT" 2>/dev/null
+  sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
 fi
 
 # ── 4. Получить текущий сервер ────────────────────────────────────────
@@ -499,6 +517,7 @@ if [ -n "$XPID" ] && [ -d "/proc/$XPID/fd" ]; then
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
       sh "$NAT_SCRIPT" 2>/dev/null
+      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
       log "Профилактический перезапуск Xray выполнен (fd было ${FD_COUNT})"
     else
       log "Профилактический перезапуск не удался"

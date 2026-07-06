@@ -3,11 +3,13 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.06.30.04"
+KOX_VERSION="2026.07.07.17"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] && . "$KOX_LIB"
+_kox_cli_ver=$(kox_read_cli_version 2>/dev/null || true)
+[ -n "$_kox_cli_ver" ] && KOX_VERSION="$_kox_cli_ver"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 CONF="/opt/etc/xray/config.json"
@@ -282,7 +284,8 @@ h_status() {
   IPT_OK=$(iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT && echo "✅" || echo "❌")
   VPN_ST=$([ -f /tmp/kox-vpn-off ] && echo "❌ ВЫКЛЮЧЕН" || echo "✅ ВКЛЮЧЕН")
   SRV=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
-  CONN=$(netstat -tn 2>/dev/null | grep -c :10808 2>/dev/null || echo 0)
+  CONN=$(netstat -tn 2>/dev/null | grep ':10808' 2>/dev/null | wc -l | tr -d ' \n\r')
+  case "$CONN" in ''|*[!0-9]*) CONN=0 ;; esac
   update_menu "$CHAT" "📊 <b>Статус KOX Shield</b>  <i>v${KOX_VERSION}</i>
 
 Xray:         ${XRAY_OK}
@@ -859,7 +862,8 @@ h_stats() {
   local CHAT="$1"
   send_typing "$CHAT"
   local CONN ERRSIZE ACCSIZE IPT_TCP IPT_UDP
-  CONN=$(netstat -tn 2>/dev/null | grep -c :10808 2>/dev/null || echo 0)
+  CONN=$(netstat -tn 2>/dev/null | grep ':10808' 2>/dev/null | wc -l | tr -d ' \n\r')
+  case "$CONN" in ''|*[!0-9]*) CONN=0 ;; esac
   ERRSIZE=$(ls -lh "$ERRLOG" 2>/dev/null | awk '{print $5}' || echo "0B")
   ACCSIZE=$(ls -lh /opt/var/log/xray-acc.log 2>/dev/null | awk '{print $5}' || echo "0B")
   IPT_TCP=$(iptables -t nat -vL XRAY_REDIRECT 2>/dev/null | \

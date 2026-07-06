@@ -167,6 +167,38 @@ kox_apply_nat_rules() {
   return 0
 }
 
+# Снять NAT Xray + QUIC-блок (при падении Xray / kox off).
+kox_iptables_remove_quic_block() {
+  iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+  ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+}
+
+kox_iptables_remove_xray_nat() {
+  iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  kox_iptables_remove_quic_block
+}
+
+# Версия из установленного kox-cli (после upgrade бот подхватывает актуальную).
+kox_read_cli_version() {
+  _v=$(grep '^KOX_VERSION=' /opt/bin/kox 2>/dev/null | head -1 | sed 's/^KOX_VERSION=//; s/"//g')
+  [ -n "$_v" ] && printf '%s' "$_v" && return 0
+  return 1
+}
+
+# BusyBox-safe подсчёт строк по паттерну (не grep -c).
+kox_count_matches() {
+  _src="$1"
+  _pat="$2"
+  _n=$(printf '%s\n' "$_src" | grep -E "$_pat" 2>/dev/null | wc -l | tr -d ' \n\r')
+  case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+  printf '%d' "$_n"
+}
+
 # Интерактивный ввод (stdin может быть pipe, читаем с TTY).
 kox_read_tty() {
   _var="$1"

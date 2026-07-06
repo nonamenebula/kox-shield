@@ -1,5 +1,16 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.17
+
+### 🛠 Fix: безопасное восстановление VPN после сбоев (watchdog / kox off)
+
+- **Watchdog**: при падении Xray снимает блок QUIC (mangle DROP udp/443), иначе YouTube ломался без VPN.
+- **Watchdog**: при восстановлении NAT вызывает `ip6tables` (IPv6-правила).
+- **`kox off` / `kox on`**: явный путь к `99-kox-nat.sh` (не подхватывает legacy `100-redirect.sh`).
+- **`kox off`**: единая очистка NAT + QUIC через `kox_iptables_remove_xray_nat`.
+- **Telegram-бот**: версия читается из `/opt/bin/kox`, не захардкожена.
+- **BusyBox**: исправлен `grep -c || echo 0` в статистике (`bad number`).
+
 ## 2026.07.07.16
 
 ### 🛠 Fix: `kox upgrade` очень медленный на Keenetic
