@@ -1067,12 +1067,13 @@ check_kox_update() {
   LAST_NOTIFIED=$(cat "$KOX_VER_NOTIFIED_FILE" 2>/dev/null | tr -d '[:space:]')
   [ "$LAST_NOTIFIED" = "$REMOTE_VER" ] && return 0
 
-  # Fetch changelog for this version
+  # Fetch changelog: все версии между текущей и удалённой
   _cl_tmp="/tmp/kox-bot-cl.$$"
   CHANGELOG=""
   if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
-    CHANGELOG=$(awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" "$_cl_tmp" 2>/dev/null | \
-      grep -v '^[[:space:]]*$' | head -6)
+    CHANGELOG=$(kox_changelog_between "$LOCAL_VER" "$REMOTE_VER" "$_cl_tmp" 40)
+    [ -z "$CHANGELOG" ] && CHANGELOG=$(awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" "$_cl_tmp" 2>/dev/null)
+    CHANGELOG=$(printf '%s\n' "$CHANGELOG" | grep -v '^[[:space:]]*$' | head -12)
   fi
   rm -f "$_cl_tmp"
 
@@ -1098,8 +1099,12 @@ check_kox_update() {
 
   [ -n "$CHANGELOG" ] && MSG="${MSG}
 
-📋 <b>Что нового:</b>
-$(printf '%s' "$CHANGELOG" | sed 's/^/• /')"
+📋 <b>Изменения v${LOCAL_VER} → v${REMOTE_VER}:</b>
+$(printf '%s\n' "$CHANGELOG" | awk '
+  /^## / { printf "\n• <b>v%s</b>\n", $2; next }
+  /^[[:space:]]*$/ { next }
+  { print "  " $0 }
+')"
 
   MSG="${MSG}
 

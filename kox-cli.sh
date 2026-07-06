@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.13"
+KOX_VERSION="2026.07.07.14"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -1735,18 +1735,31 @@ kox_upgrade() {
   sep
 
   _cl_tmp="/tmp/kox-changelog.$$"
-  CHANGELOG=""
   if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
-    CHANGELOG=$(cat "$_cl_tmp" 2>/dev/null)
+    _cl_range=$(kox_changelog_between "$KOX_VERSION" "$REMOTE_VERSION" "$_cl_tmp" 100)
+    if [ -n "$_cl_range" ]; then
+      _ver_count=$(printf '%s\n' "$_cl_range" | grep -c '^## ' 2>/dev/null || echo 0)
+      case "$_ver_count" in ''|*[!0-9]*) _ver_count=0 ;; esac
+      if [ "$_ver_count" -gt 1 ] 2>/dev/null; then
+        info "${W}Изменения v${KOX_VERSION} → v${REMOTE_VERSION}${N} (${_ver_count} версий):"
+      else
+        info "${W}Что нового в v${REMOTE_VERSION}:${N}"
+      fi
+      printf '%s\n' "$_cl_range" | while IFS= read -r LINE; do
+        case "$LINE" in
+          '## '[0-9]*) printf "  ${W}%s${N}\n" "$LINE" ;;
+          '') printf '\n' ;;
+          *) printf "  ${C}%s${N}\n" "$LINE" ;;
+        esac
+      done
+    else
+      info "${W}Что нового в v${REMOTE_VERSION}:${N}"
+      awk '/^## /{if(found)exit; found=1; next} found{print}' "$_cl_tmp" 2>/dev/null | \
+        grep -v '^[[:space:]]*$' | \
+        while IFS= read -r LINE; do printf "  ${C}%s${N}\n" "$LINE"; done
+    fi
   fi
   rm -f "$_cl_tmp"
-  if [ -n "$CHANGELOG" ]; then
-    info "${W}Что нового в v${REMOTE_VERSION}:${N}"
-    printf '%s\n' "$CHANGELOG" | \
-      awk '/^## /{if(found)exit; found=1; next} found{print}' | \
-      grep -v '^[[:space:]]*$' | \
-      while IFS= read -r LINE; do printf "  ${C}%s${N}\n" "$LINE"; done
-  fi
 
   sep
 

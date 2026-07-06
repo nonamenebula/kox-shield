@@ -1,5 +1,12 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.14
+
+### ✨ Upgrade: полный CHANGELOG между версиями
+
+- **`kox upgrade`** показывает все секции CHANGELOG между текущей и новой версией
+  (не только последнюю). Telegram-бот — то же для уведомлений.
+
 ## 2026.07.07.13
 
 ### 🛠 Fix: syntax error в kox-lib.sh (kox_count_lines)
