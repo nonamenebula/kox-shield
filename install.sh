@@ -5,7 +5,10 @@
 # ╚══════════════════════════════════════════════════════════════════╝
 #
 # Запуск на роутере одной командой:
-#   wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh && sh /tmp/kox-install.sh
+#   wget -O /tmp/kox-install.sh https://kox.nonamenebula.ru/static/kox-shield/install.sh && sh /tmp/kox-install.sh
+#
+# Зеркало KOX (работает без GitHub — важно для роутеров в РФ):
+#   https://kox.nonamenebula.ru/static/kox-shield/
 #
 # Требования:
 #   • Keenetic с установленным Entware (/opt)
@@ -14,8 +17,9 @@
 
 set -e
 
-INSTALLER_VERSION="2026.07.07.04"
+INSTALLER_VERSION="2026.07.07.05"
 
+KOX_CDN="${KOX_CDN:-https://kox.nonamenebula.ru/static/kox-shield}"
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 OPT="/opt"
 XRAY_CONF="/opt/etc/xray"
@@ -158,9 +162,43 @@ kox_curl_fetch() {
   return 1
 }
 
+# Скачать файл: сначала зеркало KOX (kox.nonamenebula.ru), затем GitHub.
+kox_fetch_to_file() {
+  _file="$1"
+  _dest="$2"
+  _max="${3:-30}"
+  _curl=""
+  if [ -x /opt/bin/curl ]; then _curl=/opt/bin/curl
+  elif command -v curl >/dev/null 2>&1; then _curl=curl
+  fi
+  _ca="${CURL_CA_BUNDLE:-}"
+  [ -z "$_ca" ] && [ -f /opt/etc/ssl/certs/ca-certificates.crt ] && _ca=/opt/etc/ssl/certs/ca-certificates.crt
+
+  _try_dl() {
+    _url="$1"
+    [ -z "$_curl" ] && return 1
+    if [ -n "$_ca" ]; then
+      "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ] && return 0
+    fi
+    "$_curl" -fsSL -4 --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ] && return 0
+    "$_curl" -fsSL --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ] && return 0
+    return 1
+  }
+
+  if _try_dl "${KOX_CDN}/${_file}"; then return 0; fi
+  if _try_dl "${GITHUB_RAW}/${_file}"; then return 0; fi
+  if [ -x /opt/bin/wget ]; then
+    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "${KOX_CDN}/${_file}" 2>/dev/null && [ -s "$_dest" ] && return 0
+    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "${GITHUB_RAW}/${_file}" 2>/dev/null && [ -s "$_dest" ] && return 0
+  fi
+  return 1
+}
+
 check_internet() {
-  if kox_curl_fetch "https://github.com" >/dev/null 2>&1; then
-    ok "Интернет доступен (HTTPS)"
+  if kox_curl_fetch "${KOX_CDN}/VERSION" >/dev/null 2>&1; then
+    ok "Интернет доступен (KOX CDN)"
+  elif kox_curl_fetch "https://kox.nonamenebula.ru/healthz" >/dev/null 2>&1; then
+    ok "Интернет доступен (kox.nonamenebula.ru)"
   elif curl -fsSL --max-time 10 --silent https://github.com -o /dev/null 2>/dev/null; then
     ok "Интернет доступен"
   elif ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
@@ -323,13 +361,11 @@ _ensure_kox_lib_early() {
   if [ -n "$0" ] && [ "$0" != "sh" ] && _try_lib "$(dirname "$0")/kox-lib.sh"; then return 0; fi
 
   mkdir -p /opt/etc 2>/dev/null || true
-  if curl -fsSL --max-time 20 "${GITHUB_RAW}/kox-lib.sh" -o /tmp/kox-lib-cache.sh 2>/dev/null \
-    && _try_lib /tmp/kox-lib-cache.sh; then
+  if kox_fetch_to_file "kox-lib.sh" /tmp/kox-lib-cache.sh 20 && _try_lib /tmp/kox-lib-cache.sh; then
     cp /tmp/kox-lib-cache.sh /opt/etc/kox-lib.sh 2>/dev/null || true
     return 0
   fi
-  if curl -fsSL --max-time 20 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null \
-    && _try_lib /opt/etc/kox-lib.sh; then
+  if kox_fetch_to_file "kox-lib.sh" /opt/etc/kox-lib.sh 20 && _try_lib /opt/etc/kox-lib.sh; then
     return 0
   fi
 
@@ -403,7 +439,7 @@ SELECTED_URI=""
 # ── Установка пакетов ─────────────────────────────────────────────────────────
 install_packages() {
   info "Загружаю kox-lib.sh..."
-  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null \
+  kox_fetch_to_file "kox-lib.sh" /opt/etc/kox-lib.sh 30 \
     && chmod +x /opt/etc/kox-lib.sh 2>/dev/null && ok "kox-lib.sh" || warn "kox-lib.sh не загружен"
 
   info "Обновляю список пакетов..."
@@ -482,16 +518,23 @@ install_hysteria() {
       warn "Не удалось определить архитектуру ($RAW_ARCH) — hysteria пропущен (vless будет работать)"
     else
       info "Загружаю hysteria (linux-${HY_ARCH})..."
-      HY_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY_ARCH}"
-      if curl -fsSL --max-time 60 "$HY_URL" -o "$HY_BIN" 2>/dev/null && [ -s "$HY_BIN" ]; then
+      HY_GH="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY_ARCH}"
+      _hy_ok=0
+      if kox_fetch_to_file "bin/hysteria-linux-${HY_ARCH}" "$HY_BIN" 90; then
+        _hy_ok=1
+      elif curl -fsSL --max-time 90 "$HY_GH" -o "$HY_BIN" 2>/dev/null && [ -s "$HY_BIN" ]; then
+        _hy_ok=1
+      fi
+      if [ "$_hy_ok" -eq 1 ]; then
         chmod +x "$HY_BIN"
         if "$HY_BIN" version >/dev/null 2>&1; then
           ok "hysteria установлен (${HY_ARCH})"
         else
-          # На MIPS без FPU помогает softfloat-вариант
           if [ "$HY_ARCH" = "mipsle" ] || [ "$HY_ARCH" = "mips" ]; then
             info "Пробую softfloat-вариант hysteria..."
-            curl -fsSL --max-time 60 "${HY_URL}-sf" -o "$HY_BIN" 2>/dev/null && chmod +x "$HY_BIN"
+            kox_fetch_to_file "bin/hysteria-linux-${HY_ARCH}-sf" "$HY_BIN" 90 \
+              || curl -fsSL --max-time 90 "${HY_GH}-sf" -o "$HY_BIN" 2>/dev/null
+            chmod +x "$HY_BIN" 2>/dev/null || true
           fi
           "$HY_BIN" version >/dev/null 2>&1 && ok "hysteria установлен (${HY_ARCH}-sf)" || \
             warn "hysteria не запускается на этом устройстве — vless будет работать"
@@ -708,9 +751,9 @@ NATSCRIPT
   chmod +x "${NAT_DIR}/99-kox-nat.sh"
   ok "iptables правила настроены"
 
-  # Watchdog: скачиваем актуальный watchdog v4 с GitHub (failover, Telegram, auto-return) (failover, Telegram, auto-return)
-  info "Загружаю watchdog с GitHub..."
-  if curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-watchdog.sh" -o /opt/etc/kox-watchdog.sh 2>/dev/null \
+  # Watchdog: зеркало KOX или GitHub
+  info "Загружаю watchdog..."
+  if kox_fetch_to_file "kox-watchdog.sh" /opt/etc/kox-watchdog.sh 30 \
       && [ -s /opt/etc/kox-watchdog.sh ]; then
     chmod +x /opt/etc/kox-watchdog.sh
     ok "Watchdog загружен (/opt/etc/kox-watchdog.sh)"
@@ -763,7 +806,7 @@ WATCHDOG_FALLBACK
   fi
 
   # Ежедневное обслуживание (hysteria + xray в 04:05)
-  if curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-maintenance.sh" -o "$MAINT" 2>/dev/null \
+  if kox_fetch_to_file "kox-maintenance.sh" "$MAINT" 30 \
       && [ -s "$MAINT" ]; then
     chmod +x "$MAINT"
     ok "Maintenance-скрипт загружен ($MAINT)"
@@ -791,24 +834,24 @@ WATCHDOG_FALLBACK
   fi
 }
 
-# ── Загрузка kox CLI и бота с GitHub ─────────────────────────────────────────
+# ── Загрузка kox CLI и бота (зеркало KOX → GitHub) ───────────────────────────
 download_scripts() {
   info "Загружаю kox-lib.sh..."
-  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh \
+  kox_fetch_to_file "kox-lib.sh" /opt/etc/kox-lib.sh 30 \
     && chmod +x /opt/etc/kox-lib.sh && ok "kox-lib → /opt/etc/kox-lib.sh" || \
     warn "Не удалось загрузить kox-lib.sh"
 
-  info "Загружаю kox CLI с GitHub..."
-  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-cli.sh" -o "${BIN}/kox" && chmod +x "${BIN}/kox" || \
-    fail "Не удалось загрузить kox CLI"
+  info "Загружаю kox CLI..."
+  kox_fetch_to_file "kox-cli.sh" "${BIN}/kox" 60 && chmod +x "${BIN}/kox" || \
+    fail "Не удалось загрузить kox CLI (проверьте DNS / kox.nonamenebula.ru)"
   ok "kox → /opt/bin/kox"
 
-  info "Загружаю kox-bot с GitHub..."
-  curl -fsSL --max-time 30 "${GITHUB_RAW}/kox-bot.sh" -o "${BIN}/kox-bot" && chmod +x "${BIN}/kox-bot" || \
+  info "Загружаю kox-bot..."
+  kox_fetch_to_file "kox-bot.sh" "${BIN}/kox-bot" 60 && chmod +x "${BIN}/kox-bot" || \
     warn "Не удалось загрузить kox-bot (опционально)"
 
   info "Загружаю init.d сервис..."
-  curl -fsSL --max-time 30 "${GITHUB_RAW}/S90kox-bot" -o "${INIT}/S90kox-bot" && chmod +x "${INIT}/S90kox-bot" || \
+  kox_fetch_to_file "S90kox-bot" "${INIT}/S90kox-bot" 30 && chmod +x "${INIT}/S90kox-bot" || \
     warn "Не удалось загрузить S90kox-bot (опционально)"
 }
 
