@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.07
+
+### 🛠 Change: GitHub первым, зеркало — fallback
+
+- Загрузка скриптов, списков и обновлений: **сначала GitHub**, при ошибке —
+  `kox.nonamenebula.ru/static/kox-shield/`.
+- Роутеры без DNS до githubusercontent автоматически переключаются на зеркало.
+
 ## 2026.07.07.06
 
 ### 🛠 Fix: зеркало списков доменов на CDN

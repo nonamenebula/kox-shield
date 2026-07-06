@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.06"
+KOX_VERSION="2026.07.07.07"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -393,7 +393,7 @@ kox_help() {
   printf "  ${G}kox list-remove${N}                — интерактивное удаление\n"
   printf "  ${G}kox list-remove all${N}            — удалить все категории\n"
   printf "  ${G}kox list-check${N}                 — проверить обновления\n"
-  printf "  ${G}kox list-update${N}                — обновить списки с GitHub\n\n"
+  printf "  ${G}kox list-update${N}                — обновить списки (GitHub / зеркало)\n\n"
   printf "  ${G}kox clean-legacy${N}     — удалить старые VPN (Kvass, Shadowsocks, SOCKS)\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox sub set <URL>${N}    — задать URL подписки\n"
@@ -1485,7 +1485,7 @@ kox_list_check() {
 }
 
 kox_list_update() {
-  info "Обновляю списки (KOX CDN / GitHub)..."
+  info "Обновляю списки (GitHub / зеркало KOX)..."
   mkdir -p "$KOX_LISTS_DIR"
   REMOTE_VER=$(kox_fetch_list_text "LISTS_VERSION" 10 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && fail "Нет подключения" && return 1
@@ -1527,7 +1527,7 @@ kox_upgrade() {
   rm -f "$_ver_tmp"
 
   if [ -z "$REMOTE_VERSION" ] || ! printf '%s' "$REMOTE_VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
-    fail "Не удалось получить версию (CDN / GitHub)"
+    fail "Не удалось получить версию (GitHub / зеркало KOX)"
     info "Проверьте подключение к интернету"
     return 1
   fi

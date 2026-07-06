@@ -1041,7 +1041,12 @@ check_kox_update() {
   [ -z "$ADMIN_ID" ] && return 0
   upgrade_notify_allowed || return 0
 
-  REMOTE_VER=$(tg_curl -fsSL --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  _ver_tmp="/tmp/kox-bot-verchk.$$"
+  REMOTE_VER=""
+  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+    REMOTE_VER=$(tr -d '[:space:]' < "$_ver_tmp")
+  fi
+  rm -f "$_ver_tmp"
   [ -z "$REMOTE_VER" ] && return 0
   printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}' || return 0
 
@@ -1056,9 +1061,13 @@ check_kox_update() {
   [ "$LAST_NOTIFIED" = "$REMOTE_VER" ] && return 0
 
   # Fetch changelog for this version
-  CHANGELOG=$(tg_curl -fsSL --max-time 10 "${GITHUB_RAW}/CHANGELOG.md" 2>/dev/null | \
-    awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" | \
-    grep -v '^[[:space:]]*$' | head -6)
+  _cl_tmp="/tmp/kox-bot-cl.$$"
+  CHANGELOG=""
+  if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
+    CHANGELOG=$(awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" "$_cl_tmp" 2>/dev/null | \
+      grep -v '^[[:space:]]*$' | head -6)
+  fi
+  rm -f "$_cl_tmp"
 
   # Auto-upgrade if enabled
   [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
@@ -1314,8 +1323,13 @@ h_kox_do_upgrade() {
   fi
 
   send_typing "$CHAT"
-  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '[:space:]')
-  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
+  _ver_tmp="/tmp/kox-bot-ver.$$"
+  REMOTE_VER=""
+  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+    REMOTE_VER=$(tr -d '[:space:]' < "$_ver_tmp")
+  fi
+  rm -f "$_ver_tmp"
+  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения (GitHub / зеркало KOX)" && return
 
   # CRITICAL: check if already up to date BEFORE doing anything
   # This handles replayed callbacks after bot restart

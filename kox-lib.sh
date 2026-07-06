@@ -38,12 +38,13 @@ kox_fetch_url_to_file() {
 }
 
 # Файл из lists/ (categories.json, youtube.txt, LISTS_VERSION, …).
+# Сначала GitHub (источник), при недоступности — зеркало KOX CDN.
 kox_fetch_list_rel() {
   _rel="$1"
   _dest="$2"
   _max="${3:-25}"
-  kox_fetch_url_to_file "${KOX_LISTS_CDN}/${_rel}" "$_dest" "$_max" && return 0
   kox_fetch_url_to_file "${GITHUB_LISTS}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${KOX_LISTS_CDN}/${_rel}" "$_dest" "$_max" && return 0
   return 1
 }
 
@@ -61,12 +62,13 @@ kox_fetch_list_text() {
 }
 
 # Файл из корня репозитория (kox-cli.sh, VERSION, …).
+# Сначала GitHub, при недоступности — зеркало KOX CDN.
 kox_fetch_repo_file() {
   _rel="$1"
   _dest="$2"
   _max="${3:-30}"
-  kox_fetch_url_to_file "${KOX_CDN}/${_rel}" "$_dest" "$_max" && return 0
   kox_fetch_url_to_file "${GITHUB_RAW}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${KOX_CDN}/${_rel}" "$_dest" "$_max" && return 0
   return 1
 }
 
