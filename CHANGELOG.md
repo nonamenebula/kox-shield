@@ -1,5 +1,12 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.02
+
+### 🛠 Fix: `uri_host: not found` при выборе HY2 до install_packages
+
+- **`_ensure_kox_lib_early`**: кэш kox-lib в `/tmp`, inline-fallback парсеры URI если GitHub
+  недоступен на этапе выбора сервера из подписки.
+
 ## 2026.07.07.01
 
 ### 🛠 Fix: парсинг подписок на Keenetic (BusyBox)
