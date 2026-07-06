@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.16"
+KOX_VERSION="2026.07.07.17"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -497,8 +497,8 @@ kox_on() {
   if kox_apply_nat_rules; then
     ok "iptables правила применены — VPN включен"
   else
-    NAT_SCRIPT=$(ls /opt/etc/ndm/netfilter.d/*nat.sh 2>/dev/null | head -1)
-    if [ -n "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null; then
+    NAT_SCRIPT="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+    if [ -f "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null; then
       sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
       ok "iptables правила применены — VPN включен"
     else
@@ -531,15 +531,19 @@ kox_fix_nat() {
 kox_off() {
   info "Выключаю VPN (iptables)..."
   touch /tmp/kox-vpn-off
-  iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-  iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
-  iptables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
-  iptables -t nat -X XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
-  ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
-  ip6tables -t nat -X XRAY_REDIRECT 2>/dev/null || true
+  if type kox_iptables_remove_xray_nat >/dev/null 2>&1; then
+    kox_iptables_remove_xray_nat
+  else
+    iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+    iptables -t nat -X XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+    ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+    ip6tables -t nat -X XRAY_REDIRECT 2>/dev/null || true
+  fi
   ok "VPN выключен. Xray продолжает работать, трафик не перенаправляется."
   info "Для включения: ${W}kox on${N}"
 }
@@ -783,7 +787,8 @@ kox_stats() {
   iptables -t nat -vL XRAY_REDIRECT 2>/dev/null | grep -v "^$" | \
     while IFS= read -r LINE; do printf "  %s\n" "$LINE"; done
   sep
-  CONN=$(netstat -tn 2>/dev/null | grep -c :10808 || echo 0)
+  CONN=$(netstat -tn 2>/dev/null | grep ':10808' 2>/dev/null | wc -l | tr -d ' \n\r')
+  case "$CONN" in ''|*[!0-9]*) CONN=0 ;; esac
   info "Соединений через Xray: ${W}${CONN}${N}"
   sep
   info "Размер логов:"
@@ -1740,7 +1745,7 @@ kox_upgrade() {
     _cl_ok=1
     _cl_range=$(kox_changelog_between "$KOX_VERSION" "$REMOTE_VERSION" "$_cl_tmp" 100)
     if [ -n "$_cl_range" ]; then
-      _ver_count=$(printf '%s\n' "$_cl_range" | grep -c '^## ' 2>/dev/null || echo 0)
+      _ver_count=$(printf '%s\n' "$_cl_range" | grep '^## ' 2>/dev/null | wc -l | tr -d ' \n\r')
       case "$_ver_count" in ''|*[!0-9]*) _ver_count=0 ;; esac
       if [ "$_ver_count" -gt 1 ] 2>/dev/null; then
         info "${W}Изменения v${KOX_VERSION} → v${REMOTE_VERSION}${N} (${_ver_count} версий):"

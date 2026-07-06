@@ -17,7 +17,7 @@
 
 set -e
 
-INSTALLER_VERSION="2026.07.07.05"
+INSTALLER_VERSION="2026.07.07.17"
 
 KOX_CDN="${KOX_CDN:-https://kox.nonamenebula.ru/static/kox-shield}"
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
@@ -776,20 +776,26 @@ if ! pgrep xray >/dev/null 2>&1; then
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+  ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   ulimit -n 65535 2>/dev/null || true
   /opt/etc/init.d/S24xray start 2>/dev/null; sleep 5
   if pgrep xray >/dev/null 2>&1; then
-    sh "$NAT_SCRIPT" 2>/dev/null; log "Xray перезапущен"
+    sh "$NAT_SCRIPT" 2>/dev/null
+    sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+    log "Xray перезапущен"
   else
     log "Xray не запустился — интернет напрямую"
     iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
     iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
     iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+    iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+    ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   fi
   exit 0
 fi
 ! netstat -ln 2>/dev/null | grep -q ':10808 ' && { killall xray 2>/dev/null; sleep 2; ulimit -n 65535 2>/dev/null || true; /opt/etc/init.d/S24xray start 2>/dev/null; }
-! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT && sh "$NAT_SCRIPT" 2>/dev/null
+! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT && { sh "$NAT_SCRIPT" 2>/dev/null; sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true; }
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 300 ] && tail -150 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"
 WATCHDOG_FALLBACK
     chmod +x /opt/etc/kox-watchdog.sh
