@@ -17,7 +17,7 @@
 
 set -e
 
-INSTALLER_VERSION="2026.07.07.17"
+INSTALLER_VERSION="2026.07.07.18"
 
 KOX_CDN="${KOX_CDN:-https://kox.nonamenebula.ru/static/kox-shield}"
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
