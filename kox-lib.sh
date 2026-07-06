@@ -154,6 +154,43 @@ kox_confirm_yes() {
   return 1
 }
 
+# Версия → число для сравнения (2026.07.07.13 → 2026070713).
+kox_version_to_int() {
+  printf '%s' "$1" | tr -d ' \t\r\n.' | tr -cd '0-9'
+}
+
+# CHANGELOG.md: все секции ## между from_ver (не включая) и to_ver (включая).
+kox_changelog_between() {
+  _from="$1"
+  _to="$2"
+  _file="$3"
+  _max="${4:-80}"
+  [ -f "$_file" ] || return 1
+  _from_i=$(kox_version_to_int "$_from")
+  _to_i=$(kox_version_to_int "$_to")
+  [ -z "$_from_i" ] || [ -z "$_to_i" ] && return 1
+  awk -v from="$_from_i" -v to="$_to_i" -v max="$_max" '
+    /^## [0-9]{4}\.[0-9]{2}\.[0-9]{2}/ {
+      ver = $2
+      gsub(/\./, "", ver)
+      show = (ver + 0 > from + 0 && ver + 0 <= to + 0)
+      if (show) {
+        if (sections++) print ""
+        print $0
+        lines = 1
+      }
+      in_blk = show
+      next
+    }
+    in_blk {
+      if (lines >= max) { truncated = 1; in_blk = 0; next }
+      print
+      lines++
+    }
+    END { if (truncated) print "... (ещё в CHANGELOG.md на GitHub)" }
+  ' "$_file" 2>/dev/null
+}
+
 # BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
 kox_count_lines() {
   _text="$1"
