@@ -1,5 +1,14 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.06
+
+### 🛠 Fix: зеркало списков доменов на CDN
+
+- **`lists/`** (categories.json, 30 категорий, LISTS_VERSION) выложены на
+  `https://kox.nonamenebula.ru/static/kox-shield/lists/`.
+- **`kox list-cats` / `kox list-load` / `kox list-update`** — CDN первым, GitHub fallback.
+- **`kox upgrade`** — все компоненты через CDN.
+
 ## 2026.07.07.05
 
 ### 🛠 Fix: зеркало на kox.nonamenebula.ru (без GitHub/DNS)

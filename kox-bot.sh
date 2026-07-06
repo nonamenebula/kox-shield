@@ -23,8 +23,6 @@ XRAY_INIT="/opt/etc/init.d/S24xray"
 DOMAIN_MARKER="kox-custom-marker"
 IP_MARKER="192.0.2.255/32"
 PROXY="socks5h://127.0.0.1:10809"
-GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
-GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 KOX_LISTS_DIR="/opt/etc/xray/lists"
 KOX_LASTCHECK_FILE="/opt/etc/xray/.kox-ver-lastcheck"
 KOX_VER_NOTIFIED_FILE="/opt/etc/xray/.kox-upgrade-notified"
@@ -1116,8 +1114,7 @@ _lists_compute_diff() {
     LOCAL_FILE="${KOX_LISTS_DIR}/${S}.txt"
     NEW_FILE="/tmp/kox-newlist-${S}.txt"
     # Fetch remote file if not already fetched
-    [ -f "$NEW_FILE" ] || curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/${S}.txt" \
-      -o "$NEW_FILE" 2>/dev/null || continue
+    [ -f "$NEW_FILE" ] || kox_fetch_list_rel "${S}.txt" "$NEW_FILE" 10 || continue
     [ -f "$LOCAL_FILE" ] || continue
 
     # Find added: in new but not in old
@@ -1166,7 +1163,7 @@ check_lists_update() {
   [ -z "$ADMIN_ID" ] && return 0
 
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  REMOTE_VER=$(tg_curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(kox_fetch_list_text "LISTS_VERSION" 10 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && return 0
   printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]' || return 0
 
@@ -1188,8 +1185,7 @@ check_lists_update() {
   if [ "${KOX_AUTO_LIST_UPDATE:-no}" = "yes" ]; then
     log "Auto-updating lists to v${REMOTE_VER}..."
     mkdir -p "$KOX_LISTS_DIR"
-    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
-      -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+    kox_fetch_list_rel "categories.json" "${KOX_LISTS_DIR}/categories.json" 10
     if [ -n "$LOADED" ]; then
       printf '%s\n' "$LOADED" | while IFS= read -r S; do
         [ -z "$S" ] && continue
@@ -1268,12 +1264,11 @@ ${REM_DOMAINS}
 h_lists_update() {
   local CHAT="$1"
   send_typing "$CHAT"
-  REMOTE_VER=$(curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к GitHub" && return
+  REMOTE_VER=$(kox_fetch_list_text "LISTS_VERSION" 10 2>/dev/null | tr -d '[:space:]')
+  [ -z "$REMOTE_VER" ] && update_menu "$CHAT" "❌ Нет подключения к серверу списков" && return
 
   mkdir -p "$KOX_LISTS_DIR"
-  curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
-    -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+  kox_fetch_list_rel "categories.json" "${KOX_LISTS_DIR}/categories.json" 10
 
   LOADED=$(cat "${KOX_LISTS_DIR}/kox-lists-loaded.conf" 2>/dev/null || echo "")
   if [ -z "$LOADED" ]; then
@@ -1627,8 +1622,7 @@ h_list_cats() {
   CATS_FILE="${KOX_LISTS_DIR}/categories.json"
   if [ ! -f "$CATS_FILE" ]; then
     mkdir -p "$KOX_LISTS_DIR"
-    curl -fsSL -x "$PROXY" --max-time 10 "${GITHUB_LISTS}/categories.json" \
-      -o "$CATS_FILE" 2>/dev/null
+    kox_fetch_list_rel "categories.json" "$CATS_FILE" 10
   fi
   [ ! -f "$CATS_FILE" ] && update_menu "$CHAT" "❌ Не удалось загрузить список категорий" && return
 

@@ -4,6 +4,71 @@
 
 KOX_URI_GREP='^(vless|hysteria2|hy2)://'
 KOX_RELAY_HOST="${KOX_RELAY_HOST:-kox.nonamenebula.ru}"
+KOX_CDN="${KOX_CDN:-https://kox.nonamenebula.ru/static/kox-shield}"
+GITHUB_RAW="${GITHUB_RAW:-https://raw.githubusercontent.com/nonamenebula/kox-shield/main}"
+KOX_LISTS_CDN="${KOX_LISTS_CDN:-${KOX_CDN}/lists}"
+GITHUB_LISTS="${GITHUB_LISTS:-${GITHUB_RAW}/lists}"
+
+# Скачать URL → файл (IPv4, CA bundle). Для скриптов и списков доменов.
+kox_fetch_url_to_file() {
+  _url="$1"
+  _dest="$2"
+  _max="${3:-30}"
+  _curl=""
+  if [ -x /opt/bin/curl ]; then _curl=/opt/bin/curl
+  elif command -v curl >/dev/null 2>&1; then _curl=curl
+  fi
+  _ca="${CURL_CA_BUNDLE:-}"
+  [ -z "$_ca" ] && [ -f /opt/etc/ssl/certs/ca-certificates.crt ] && _ca=/opt/etc/ssl/certs/ca-certificates.crt
+  if [ -n "$_curl" ]; then
+    if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+      return 0
+    fi
+    if "$_curl" -fsSL -4 --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+      return 0
+    fi
+    if "$_curl" -fsSL --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+      return 0
+    fi
+  fi
+  if [ -x /opt/bin/wget ]; then
+    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "$_url" 2>/dev/null && [ -s "$_dest" ] && return 0
+  fi
+  return 1
+}
+
+# Файл из lists/ (categories.json, youtube.txt, LISTS_VERSION, …).
+kox_fetch_list_rel() {
+  _rel="$1"
+  _dest="$2"
+  _max="${3:-25}"
+  kox_fetch_url_to_file "${KOX_LISTS_CDN}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${GITHUB_LISTS}/${_rel}" "$_dest" "$_max" && return 0
+  return 1
+}
+
+kox_fetch_list_text() {
+  _rel="$1"
+  _max="${2:-15}"
+  _tmp="/tmp/kox-list-fetch.$$"
+  if kox_fetch_list_rel "$_rel" "$_tmp" "$_max"; then
+    cat "$_tmp"
+    rm -f "$_tmp"
+    return 0
+  fi
+  rm -f "$_tmp"
+  return 1
+}
+
+# Файл из корня репозитория (kox-cli.sh, VERSION, …).
+kox_fetch_repo_file() {
+  _rel="$1"
+  _dest="$2"
+  _max="${3:-30}"
+  kox_fetch_url_to_file "${KOX_CDN}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${GITHUB_RAW}/${_rel}" "$_dest" "$_max" && return 0
+  return 1
+}
 
 # BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
 kox_count_lines() {
