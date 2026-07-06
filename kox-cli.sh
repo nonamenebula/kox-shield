@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.07"
+KOX_VERSION="2026.07.07.08"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -440,6 +440,11 @@ kox_status() {
   else
     warn "iptables правила отсутствуют — VPN может быть отключен"
   fi
+  if iptables -t mangle -L PREROUTING 2>/dev/null | grep -q 'udp.*443.*DROP'; then
+    ok "QUIC-блок (UDP/443): активен — YouTube через TCP/туннель"
+  elif [ ! -f /tmp/kox-vpn-off ]; then
+    warn "QUIC-блок не активен — выполните: sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+  fi
 
   # VPN on/off marker
   if [ -f /tmp/kox-vpn-off ]; then
@@ -502,9 +507,11 @@ kox_off() {
   iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  iptables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   iptables -t nat -X XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   ip6tables -t nat -X XRAY_REDIRECT 2>/dev/null || true
   ok "VPN выключен. Xray продолжает работать, трафик не перенаправляется."
   info "Для включения: ${W}kox on${N}"
