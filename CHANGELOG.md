@@ -1,5 +1,12 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.12
+
+### 🛠 Fix: `kox clean-legacy` не принимал «y» на Keenetic
+
+- Надёжное чтение с TTY (`kox_read_tty`) + распознавание y/yes/д/да/1.
+- Подсказка про `--force` при отмене.
+
 ## 2026.07.07.11
 
 ### 🛠 Fix: `kox clean-legacy` — полная очистка Habr Shadowsocks
