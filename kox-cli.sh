@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.11"
+KOX_VERSION="2026.07.07.12"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -1083,12 +1083,13 @@ kox_clean_legacy() {
     info "Режим --force: удаляю без подтверждения"
   else
     printf " ${W}Найдено устаревшее ПО. Удалить всё? [y/N]:${N} "
-    read -r CONFIRM </dev/tty
+    kox_read_tty CONFIRM
     printf "\n"
-    case "$CONFIRM" in
-      y|Y|yes|YES|д|Д) : ;;
-      *) info "Отмена. Ничего не изменено."; return 0 ;;
-    esac
+    if ! kox_confirm_yes "$CONFIRM"; then
+      info "Отмена. Ничего не изменено."
+      info "Подсказка: без вопроса — ${W}kox clean-legacy --force${N}"
+      return 0
+    fi
   fi
 
   sep

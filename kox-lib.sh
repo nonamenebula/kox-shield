@@ -134,8 +134,25 @@ kox_apply_nat_rules() {
   return 0
 }
 
-# BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
-kox_count_lines() {
+# Интерактивный ввод (stdin может быть pipe, читаем с TTY).
+kox_read_tty() {
+  _var="$1"
+  if [ -r /dev/tty ]; then
+    IFS= read -r _line </dev/tty 2>/dev/null || IFS= read -r _line
+  else
+    IFS= read -r _line
+  fi
+  eval "$_var=\$_line"
+}
+
+# y / yes / д / да / 1 — с учётом пробелов и регистра.
+kox_confirm_yes() {
+  _ans=$(printf '%s' "$1" | tr -d '\r\n\t ' | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
+  case "$_ans" in
+    y|yes|ye|1|d|da|д|да) return 0 ;;
+  esac
+  return 1
+}
   _text="$1"
   _pat="$2"
   _n=$(printf '%s\n' "$_text" | grep -E "$_pat" 2>/dev/null | wc -l | tr -d ' \n\r')
