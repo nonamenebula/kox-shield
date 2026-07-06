@@ -202,31 +202,90 @@ parse_subscription() {
 }
 
 _ensure_kox_lib_early() {
-  if [ -f /opt/etc/kox-lib.sh ]; then
-    # shellcheck disable=SC1091
-    . /opt/etc/kox-lib.sh 2>/dev/null
+  if type uri_host >/dev/null 2>&1; then
     return 0
   fi
-  _local=""
-  if [ -n "$0" ] && [ "$0" != "sh" ] && [ -f "$(dirname "$0")/kox-lib.sh" ]; then
-    _local="$(dirname "$0")/kox-lib.sh"
-  fi
-  if [ -n "$_local" ]; then
+
+  _try_lib() {
+    _f="$1"
+    [ -f "$_f" ] || return 1
     # shellcheck disable=SC1090
-    . "$_local" 2>/dev/null
+    . "$_f" 2>/dev/null
+    type uri_host >/dev/null 2>&1
+  }
+
+  if _try_lib /opt/etc/kox-lib.sh; then return 0; fi
+  if _try_lib /tmp/kox-lib-cache.sh; then return 0; fi
+  if [ -n "$0" ] && [ "$0" != "sh" ] && _try_lib "$(dirname "$0")/kox-lib.sh"; then return 0; fi
+
+  mkdir -p /opt/etc 2>/dev/null || true
+  if curl -fsSL --max-time 20 "${GITHUB_RAW}/kox-lib.sh" -o /tmp/kox-lib-cache.sh 2>/dev/null \
+    && _try_lib /tmp/kox-lib-cache.sh; then
+    cp /tmp/kox-lib-cache.sh /opt/etc/kox-lib.sh 2>/dev/null || true
     return 0
   fi
-  mkdir -p /opt/etc 2>/dev/null || true
-  curl -fsSL --max-time 15 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null || true
-  if [ -f /opt/etc/kox-lib.sh ]; then
-    # shellcheck disable=SC1091
-    . /opt/etc/kox-lib.sh 2>/dev/null
+  if curl -fsSL --max-time 20 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null \
+    && _try_lib /opt/etc/kox-lib.sh; then
+    return 0
   fi
+
+  # Минимальные парсеры URI — если GitHub недоступен до install_packages
+  uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
+  uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
+  uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
+  uri_qparam() {
+    _p="$2"
+    printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^${_p}=" | head -1 | cut -d= -f2-
+  }
+  uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
+
+  kox_normalize_sub_url() {
+    _url="$1"
+    case "$_url" in
+      */u/*)
+        _base=${_url%%/u/*}
+        _token=${_url#*/u/}; _token=${_token%%/*}; _token=${_token%%\?*}; _token=${_token%%#*}
+        [ -n "$_base" ] && [ -n "$_token" ] && { printf '%s/c/%s' "$_base" "$_token"; return 0; }
+        ;;
+    esac
+    printf '%s' "$_url"
+  }
+
+  kox_is_html_payload() {
+    case "$1" in *'<!DOCTYPE'*|*'<!doctype'*|*'<html'*|*'<HTML'*) return 0 ;; esac
+    return 1
+  }
+
+  kox_decode_subscription_body() {
+    _in="$1"
+    _out=$(printf '%s' "$_in" | base64 -d 2>/dev/null) && [ -n "$_out" ] && { printf '%s' "$_out"; return 0; }
+    _out=$(printf '%s' "$_in" | base64 -D 2>/dev/null) && [ -n "$_out" ] && { printf '%s' "$_out"; return 0; }
+    printf '%s' "$_in"
+  }
+
+  kox_count_lines() {
+    _text="$1"; _pat="$2"
+    _n=$(printf '%s\n' "$_text" | grep -E "$_pat" 2>/dev/null | wc -l | tr -d ' \n\r')
+    case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+    printf '%d' "$_n"
+  }
+
+  KOX_RELAY_HOST="${KOX_RELAY_HOST:-kox.nonamenebula.ru}"
+  kox_build_sub_server_list() {
+    _raw="$1"; _outfile="$2"
+    : > "$_outfile"
+    _relay=$(printf '%s\n' "$_raw" | grep -E '^vless://' | grep "@${KOX_RELAY_HOST}:" || true)
+    _vother=$(printf '%s\n' "$_raw" | grep -E '^vless://' | grep -v "@${KOX_RELAY_HOST}:" || true)
+    _hy2=$(printf '%s\n' "$_raw" | grep -E '^(hysteria2|hy2)://' || true)
+    [ -n "$_relay" ] && printf '%s\n' "$_relay" >> "$_outfile"
+    [ -n "$_vother" ] && printf '%s\n' "$_vother" >> "$_outfile"
+    [ -n "$_hy2" ] && printf '%s\n' "$_hy2" >> "$_outfile"
+  }
 }
 
 _apply_selected_uri() {
   SELECTED_URI="$1"
-  [ -f /opt/etc/kox-lib.sh ] && . /opt/etc/kox-lib.sh 2>/dev/null
+  _ensure_kox_lib_early
   if printf '%s' "$SELECTED_URI" | grep -q '^vless://'; then
     VLESS_URL="$SELECTED_URI"
     parse_vless_url "$VLESS_URL"

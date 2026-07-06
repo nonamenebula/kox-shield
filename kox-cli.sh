@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.01"
+KOX_VERSION="2026.07.07.02"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
