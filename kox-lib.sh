@@ -37,38 +37,39 @@ kox_fetch_url_to_file() {
   }
 
   _try_wget() {
-    [ -x /opt/bin/wget ] || return 1
-    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "$1" 2>/dev/null && [ -s "$_dest" ] && return 0
+    case "$1" in
+      https://*) return 1 ;;
+    esac
+    if [ -x /opt/bin/wget ]; then
+      /opt/bin/wget -qO "$_dest" -4 -T "$_max" "$1" 2>/dev/null && [ -s "$_dest" ] && return 0
+    fi
+    return 1
+  }
+
+  _try_cdn_ip() {
+    case "$_url" in
+      https://kox.nonamenebula.ru/*|http://kox.nonamenebula.ru/*)
+        _path=${_url#*kox.nonamenebula.ru}
+        ;;
+      *) return 1 ;;
+    esac
+    [ -n "$_curl" ] || return 1
+    _ipurl="https://${KOX_CDN_IP}${_path}"
+    if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" \
+        -H "Host: kox.nonamenebula.ru" --resolve "kox.nonamenebula.ru:443:${KOX_CDN_IP}" \
+        "https://kox.nonamenebula.ru${_path}" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+      return 0
+    fi
+    if "$_curl" -fsSL -4 --max-time "$_max" -k \
+        -H "Host: kox.nonamenebula.ru" "$_ipurl" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+      return 0
+    fi
     return 1
   }
 
   _try_curl "$_url" && return 0
+  _try_cdn_ip && return 0
   _try_wget "$_url" && return 0
-
-  # DNS на роутере часто не резолвит kox.nonamenebula.ru — пробуем по IP + Host
-  case "$_url" in
-    https://kox.nonamenebula.ru/*|http://kox.nonamenebula.ru/*)
-      _path=${_url#*kox.nonamenebula.ru}
-      _ipurl="https://${KOX_CDN_IP}${_path}"
-      if [ -n "$_curl" ]; then
-        if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" \
-            -H "Host: kox.nonamenebula.ru" --resolve "kox.nonamenebula.ru:443:${KOX_CDN_IP}" \
-            "https://kox.nonamenebula.ru${_path}" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
-          return 0
-        fi
-        if "$_curl" -fsSL -4 --max-time "$_max" -k \
-            -H "Host: kox.nonamenebula.ru" "$_ipurl" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
-          return 0
-        fi
-      fi
-      if [ -x /opt/bin/wget ]; then
-        if /opt/bin/wget -qO "$_dest" -4 -T "$_max" --no-check-certificate \
-            --header="Host: kox.nonamenebula.ru" "$_ipurl" 2>/dev/null && [ -s "$_dest" ]; then
-          return 0
-        fi
-      fi
-      ;;
-  esac
   return 1
 }
 
@@ -117,6 +118,28 @@ kox_fetch_repo_meta() {
   return 1
 }
 
+# Скрипты при kox upgrade — CDN первым (быстро), GitHub fallback 6 с.
+kox_fetch_repo_upgrade() {
+  _rel="$1"
+  _dest="$2"
+  kox_fetch_url_to_file "${KOX_CDN}/${_rel}" "$_dest" 12 && return 0
+  kox_fetch_url_to_file "${GITHUB_RAW}/${_rel}" "$_dest" 6 && return 0
+  return 1
+}
+
+# curl + ca-certificates (BusyBox wget не умеет https://).
+kox_ensure_https_tools() {
+  if [ -x /opt/bin/opkg ]; then
+    command -v curl >/dev/null 2>&1 || [ -x /opt/bin/curl ] || \
+      /opt/bin/opkg install curl >/dev/null 2>&1
+    /opt/bin/opkg list-installed 2>/dev/null | grep -q '^ca-certificates ' || \
+      /opt/bin/opkg install ca-certificates >/dev/null 2>&1
+  fi
+  if [ -f /opt/etc/ssl/certs/ca-certificates.crt ]; then
+    export CURL_CA_BUNDLE=/opt/etc/ssl/certs/ca-certificates.crt
+  fi
+}
+
 # Активен ли QUIC-блок (UDP/443 → DROP на LAN).
 kox_quic_block_active() {
   iptables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
@@ -128,7 +151,7 @@ kox_quic_block_active() {
 kox_install_nat_script() {
   _dest="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
   mkdir -p /opt/etc/ndm/netfilter.d
-  if kox_fetch_repo_file "99-kox-nat.sh" "$_dest" 15 && [ -s "$_dest" ]; then
+  if kox_fetch_repo_upgrade "99-kox-nat.sh" "$_dest" 12 && [ -s "$_dest" ]; then
     chmod +x "$_dest"
     return 0
   fi

@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.15"
+KOX_VERSION="2026.07.07.16"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -1787,7 +1787,8 @@ kox_upgrade() {
     fi
   fi
 
-  info "Загружаю обновление..."
+  info "Загружаю обновление (CDN → GitHub)..."
+  kox_ensure_https_tools 2>/dev/null
 
   # Backup current scripts
   cp /opt/bin/kox     /opt/bin/kox.backup     2>/dev/null || true
@@ -1796,7 +1797,8 @@ kox_upgrade() {
   FAIL=0
 
   # kox-cli.sh → /opt/bin/kox
-  if kox_fetch_repo_file "kox-cli.sh" /tmp/kox-upgrade-cli 30 \
+  info "  kox-cli.sh..."
+  if kox_fetch_repo_upgrade "kox-cli.sh" /tmp/kox-upgrade-cli \
       && [ -s /tmp/kox-upgrade-cli ]; then
     chmod +x /tmp/kox-upgrade-cli
     mv /tmp/kox-upgrade-cli /opt/bin/kox
@@ -1808,7 +1810,8 @@ kox_upgrade() {
   fi
 
   # kox-bot.sh → /opt/bin/kox-bot
-  if kox_fetch_repo_file "kox-bot.sh" /tmp/kox-upgrade-bot 30 \
+  info "  kox-bot.sh..."
+  if kox_fetch_repo_upgrade "kox-bot.sh" /tmp/kox-upgrade-bot \
       && [ -s /tmp/kox-upgrade-bot ]; then
     chmod +x /tmp/kox-upgrade-bot
     mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
@@ -1818,7 +1821,8 @@ kox_upgrade() {
   fi
 
   # S90kox-bot → /opt/etc/init.d/S90kox-bot
-  if kox_fetch_repo_file "S90kox-bot" /tmp/kox-upgrade-init 30 \
+  info "  S90kox-bot..."
+  if kox_fetch_repo_upgrade "S90kox-bot" /tmp/kox-upgrade-init \
       && [ -s /tmp/kox-upgrade-init ]; then
     chmod +x /tmp/kox-upgrade-init
     mv /tmp/kox-upgrade-init "$BOT_INIT"
@@ -1826,7 +1830,8 @@ kox_upgrade() {
   fi
 
   # kox-watchdog.sh → /opt/etc/kox-watchdog.sh
-  if kox_fetch_repo_file "kox-watchdog.sh" /tmp/kox-upgrade-wd 30 \
+  info "  kox-watchdog.sh..."
+  if kox_fetch_repo_upgrade "kox-watchdog.sh" /tmp/kox-upgrade-wd \
       && [ -s /tmp/kox-upgrade-wd ]; then
     chmod +x /tmp/kox-upgrade-wd
     mv /tmp/kox-upgrade-wd /opt/etc/kox-watchdog.sh
@@ -1836,7 +1841,8 @@ kox_upgrade() {
   fi
 
   # kox-lib.sh → /opt/etc/kox-lib.sh
-  if kox_fetch_repo_file "kox-lib.sh" /tmp/kox-upgrade-lib 30 \
+  info "  kox-lib.sh..."
+  if kox_fetch_repo_upgrade "kox-lib.sh" /tmp/kox-upgrade-lib \
       && [ -s /tmp/kox-upgrade-lib ]; then
     chmod +x /tmp/kox-upgrade-lib
     mv /tmp/kox-upgrade-lib /opt/etc/kox-lib.sh
@@ -1846,7 +1852,8 @@ kox_upgrade() {
   fi
 
   # kox-maintenance.sh → /opt/etc/kox-maintenance.sh
-  if kox_fetch_repo_file "kox-maintenance.sh" /tmp/kox-upgrade-maint 30 \
+  info "  kox-maintenance.sh..."
+  if kox_fetch_repo_upgrade "kox-maintenance.sh" /tmp/kox-upgrade-maint \
       && [ -s /tmp/kox-upgrade-maint ]; then
     chmod +x /tmp/kox-upgrade-maint
     mv /tmp/kox-upgrade-maint /opt/etc/kox-maintenance.sh
