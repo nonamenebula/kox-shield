@@ -1050,7 +1050,7 @@ check_kox_update() {
 
   _ver_tmp="/tmp/kox-bot-verchk.$$"
   REMOTE_VER=""
-  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+  if kox_fetch_repo_meta "VERSION" "$_ver_tmp" 12; then
     REMOTE_VER=$(tr -d '[:space:]' < "$_ver_tmp")
   fi
   rm -f "$_ver_tmp"
@@ -1070,7 +1070,7 @@ check_kox_update() {
   # Fetch changelog: все версии между текущей и удалённой
   _cl_tmp="/tmp/kox-bot-cl.$$"
   CHANGELOG=""
-  if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
+  if kox_fetch_repo_meta "CHANGELOG.md" "$_cl_tmp" 12; then
     CHANGELOG=$(kox_changelog_between "$LOCAL_VER" "$REMOTE_VER" "$_cl_tmp" 40)
     [ -z "$CHANGELOG" ] && CHANGELOG=$(awk "/^## ${REMOTE_VER}/{found=1;next} found && /^## /{exit} found{print}" "$_cl_tmp" 2>/dev/null)
     CHANGELOG=$(printf '%s\n' "$CHANGELOG" | grep -v '^[[:space:]]*$' | head -12)
@@ -1337,7 +1337,7 @@ h_kox_do_upgrade() {
   send_typing "$CHAT"
   _ver_tmp="/tmp/kox-bot-ver.$$"
   REMOTE_VER=""
-  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+  if kox_fetch_repo_meta "VERSION" "$_ver_tmp" 12; then
     REMOTE_VER=$(tr -d '[:space:]' < "$_ver_tmp")
   fi
   rm -f "$_ver_tmp"

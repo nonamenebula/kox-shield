@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.15
+
+### 🛠 Fix: `kox upgrade` медленный и пустой CHANGELOG
+
+- **CHANGELOG.md** на зеркале CDN; VERSION/CHANGELOG грузятся с CDN первым (быстро).
+- GitHub — fallback с таймаутом 8 с (не 30).
+- Сообщение, если CHANGELOG недоступен; исправлен разбор версий `YYYY.MM.DD.NN`.
+
 ## 2026.07.07.14
 
 ### ✨ Upgrade: полный CHANGELOG между версиями
