@@ -14,15 +14,18 @@
 
 set -e
 
+INSTALLER_VERSION="2026.07.07.04"
+
 GITHUB_RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
 OPT="/opt"
 XRAY_CONF="/opt/etc/xray"
 BIN="/opt/bin"
 INIT="/opt/etc/init.d"
 
-# ── Цвета ─────────────────────────────────────────────────────────────────────
-R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'
-C='\033[0;36m'; W='\033[1;37m'; N='\033[0m'
+# ── Цвета (BusyBox: '\033' в одинарных кавычках не работает — только printf) ──
+ESC=$(printf '\033')
+R="${ESC}[0;31m"; G="${ESC}[0;32m"; Y="${ESC}[0;33m"
+C="${ESC}[0;36m"; W="${ESC}[1;37m"; N="${ESC}[0m"
 
 ok()   { printf " ${G}✓${N}  %s\n" "$*"; }
 fail() { printf " ${R}✗${N}  %s\n" "$*" >&2; exit 1; }
@@ -30,6 +33,16 @@ info() { printf " ${C}•${N}  %s\n" "$*"; }
 warn() { printf " ${Y}!${N}  %s\n" "$*"; }
 sep()  { printf "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"; }
 ask()  { printf " ${W}?${N}  %s " "$*"; }
+
+# Парсеры URI — всегда в install.sh (до kox-lib и до выбора сервера).
+uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
+uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
+uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
+uri_qparam() {
+  _p="$2"
+  printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^${_p}=" | head -1 | cut -d= -f2-
+}
+uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
 
 read_tty() {
   # The installer is usually started as `wget -qO- ... | sh`, so stdin is the
@@ -261,7 +274,7 @@ parse_subscription() {
   case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
 
   printf "\n"
-  info "${W}Доступно серверов: ${COUNT}${N}"
+  printf " ${C}•${N}  ${W}Доступно серверов: ${COUNT}${N}\n"
   sep
   i=1
   while IFS= read -r line; do
@@ -293,7 +306,7 @@ parse_subscription() {
 }
 
 _ensure_kox_lib_early() {
-  if type uri_host >/dev/null 2>&1; then
+  if type kox_normalize_sub_url >/dev/null 2>&1 && type kox_count_lines >/dev/null 2>&1; then
     return 0
   fi
 
@@ -302,7 +315,7 @@ _ensure_kox_lib_early() {
     [ -f "$_f" ] || return 1
     # shellcheck disable=SC1090
     . "$_f" 2>/dev/null
-    type uri_host >/dev/null 2>&1
+    type kox_normalize_sub_url >/dev/null 2>&1
   }
 
   if _try_lib /opt/etc/kox-lib.sh; then return 0; fi
@@ -320,16 +333,7 @@ _ensure_kox_lib_early() {
     return 0
   fi
 
-  # Минимальные парсеры URI — если GitHub недоступен до install_packages
-  uri_host()  { printf '%s' "$1" | sed 's|^[a-z0-9]*://[^@]*@\([^:/?#]*\).*|\1|'; }
-  uri_port()  { printf '%s' "$1" | sed -n 's|^[a-z0-9]*://[^@]*@[^:/?#]*:\([0-9]*\).*|\1|p'; }
-  uri_userinfo() { printf '%s' "$1" | sed 's|^[a-z0-9]*://\([^@]*\)@.*|\1|'; }
-  uri_qparam() {
-    _p="$2"
-    printf '%s' "$1" | sed 's/^[^?]*?//; s/#.*//' | tr '&' '\n' | grep "^${_p}=" | head -1 | cut -d= -f2-
-  }
-  uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
-
+  # Минимальные парсеры подписки — если GitHub недоступен до install_packages
   kox_normalize_sub_url() {
     _url="$1"
     case "$_url" in
@@ -855,6 +859,7 @@ show_result() {
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 banner
+info "Установщик KOX Shield v${INSTALLER_VERSION}"
 
 # 1. Проверки
 info "Проверяю окружение..."
