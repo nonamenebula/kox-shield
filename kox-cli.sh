@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.08"
+KOX_VERSION="2026.07.07.09"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -369,6 +369,7 @@ kox_help() {
   printf "  ${G}kox status${N}           — статус Xray и туннеля\n"
   printf "  ${G}kox on${N}               — включить VPN (iptables)\n"
   printf "  ${G}kox off${N}              — выключить VPN (iptables)\n"
+  printf "  ${G}kox fix-nat${N}          — обновить NAT + QUIC-блок (YouTube)\n"
   printf "  ${G}kox restart${N}          — перезапустить VPN (Xray + Hysteria2)\n"
   printf "  ${G}kox test${N}             — проверить конфиг Xray\n"
   printf "  ${G}kox server${N}           — инфо о текущем сервере (VLESS/HY2)\n"
@@ -440,10 +441,10 @@ kox_status() {
   else
     warn "iptables правила отсутствуют — VPN может быть отключен"
   fi
-  if iptables -t mangle -L PREROUTING 2>/dev/null | grep -q 'udp.*443.*DROP'; then
+  if kox_quic_block_active; then
     ok "QUIC-блок (UDP/443): активен — YouTube через TCP/туннель"
   elif [ ! -f /tmp/kox-vpn-off ]; then
-    warn "QUIC-блок не активен — выполните: sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+    warn "QUIC-блок не активен — выполните: ${W}kox fix-nat${N}"
   fi
 
   # VPN on/off marker
@@ -493,11 +494,37 @@ kox_status() {
 kox_on() {
   info "Включаю VPN..."
   rm -f /tmp/kox-vpn-off
-  NAT_SCRIPT=$(ls /opt/etc/ndm/netfilter.d/*nat.sh 2>/dev/null | head -1)
-  if [ -n "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null; then
+  if kox_apply_nat_rules; then
     ok "iptables правила применены — VPN включен"
   else
-    fail "Ошибка применения iptables правил"
+    NAT_SCRIPT=$(ls /opt/etc/ndm/netfilter.d/*nat.sh 2>/dev/null | head -1)
+    if [ -n "$NAT_SCRIPT" ] && sh "$NAT_SCRIPT" 2>/dev/null; then
+      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+      ok "iptables правила применены — VPN включен"
+    else
+      fail "Ошибка применения iptables правил"
+    fi
+  fi
+}
+
+kox_fix_nat() {
+  info "Обновляю NAT-скрипт (QUIC-блок для YouTube)..."
+  if kox_install_nat_script; then
+    ok "99-kox-nat.sh установлен"
+  else
+    fail "Не удалось загрузить 99-kox-nat.sh"
+    return 1
+  fi
+  if kox_apply_nat_rules; then
+    if kox_quic_block_active; then
+      ok "QUIC-блок активен — YouTube должен открываться через TCP"
+    else
+      warn "Правила применены, но QUIC-блок не обнаружен"
+      info "Проверьте: iptables -t mangle -L PREROUTING -n -v | grep 443"
+    fi
+  else
+    fail "Ошибка применения NAT-правил"
+    return 1
   fi
 }
 
@@ -1648,10 +1675,12 @@ kox_upgrade() {
     warn "Не удалось загрузить kox-maintenance.sh"
   fi
 
-  # 99-kox-nat.sh — добавить guard pgrep xray если ещё нет
+  # 99-kox-nat.sh — полная замена (QUIC-блок для YouTube)
   NAT_FILE="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
-  if [ -f "$NAT_FILE" ] && ! grep -q "pgrep xray" "$NAT_FILE" 2>/dev/null; then
-    # Вставить guard после первой строки (#!/bin/sh)
+  if kox_install_nat_script; then
+    kox_apply_nat_rules 2>/dev/null || true
+    ok "NAT-скрипт обновлён (QUIC-блок UDP/443)"
+  elif [ -f "$NAT_FILE" ] && ! grep -q "pgrep xray" "$NAT_FILE" 2>/dev/null; then
     sed -i '1a\
 \
 # Не применять если Xray не запущен — иначе весь трафик уйдёт в никуда\
@@ -1659,6 +1688,8 @@ kox_upgrade() {
 pgrep xray >/dev/null 2>&1 || exit 0' "$NAT_FILE" 2>/dev/null && \
       ok "NAT-скрипт обновлён (добавлена защита от blackhole)" || \
       warn "Не удалось обновить NAT-скрипт"
+  else
+    warn "Не удалось обновить NAT-скрипт — выполните: kox fix-nat"
   fi
 
   # S24xray + cron: шаги из НОВОГО /opt/bin/kox (этот процесс ещё со старым кодом в RAM)
@@ -2042,6 +2073,7 @@ case "$CMD" in
   status)        kox_status ;;
   on)            kox_on ;;
   off)           kox_off ;;
+  fix-nat)       kox_fix_nat ;;
   restart)       kox_restart ;;
   test)          kox_test ;;
   server)        kox_server ;;
