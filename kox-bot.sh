@@ -749,9 +749,11 @@ h_off() {
   iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
   iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+  iptables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   iptables -t nat -X XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
   ip6tables -t nat -X XRAY_REDIRECT 2>/dev/null || true
   update_menu "$CHAT" "❌ <b>VPN выключен</b>
 

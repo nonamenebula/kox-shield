@@ -643,7 +643,8 @@ generate_config() {
         "type": "field",
         "domain": [
           "domain:youtube.com",       "domain:youtu.be",           "domain:googlevideo.com",
-          "domain:ytimg.com",         "domain:ggpht.com",
+          "domain:ytimg.com",         "domain:ggpht.com",          "domain:gstatic.com",
+          "domain:googleusercontent.com",
           "domain:whatsapp.com",      "domain:whatsapp.net",       "domain:wa.me",
           "domain:twitter.com",       "domain:x.com",              "domain:t.co",
           "domain:twimg.com",
@@ -742,6 +743,11 @@ done
 # Остальной трафик (игры, торренты, и т.д.) идёт напрямую
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
+
+# YouTube/Google используют QUIC (UDP/443). REDIRECT работает только для TCP —
+# без этого QUIC идёт напрямую и сайт не открывается. Блокируем → браузер на TCP.
+$IPTS -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+$IPTS -t mangle -A PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
 
 # Применить к трафику LAN
 $IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true

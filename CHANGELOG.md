@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.08
+
+### 🛠 Fix: YouTube не открывается (QUIC / UDP 443)
+
+- **NAT**: блок UDP/443 на LAN — браузер переключается на TCP/HTTPS через Xray
+  (REDIRECT работает только для TCP; QUIC шёл мимо VPN).
+- **Списки**: в `youtube` добавлены `gstatic.com`, `googleusercontent.com`.
+
 ## 2026.07.07.07
 
 ### 🛠 Change: GitHub первым, зеркало — fallback
