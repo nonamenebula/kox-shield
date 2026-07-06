@@ -1,5 +1,18 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.01
+
+### 🛠 Fix: парсинг подписок на Keenetic (BusyBox)
+
+- **`grep -c || echo 0`**: исправлен баг `sh: 0\n0: bad number` на BusyBox при пустой
+  подписке или HTML вместо base64.
+- **`/u/TOKEN` → `/c/TOKEN`**: ссылка личного кабинета автоматически заменяется на
+  подписку; при HTML — понятная ошибка.
+- **`kox-lib.sh`**: `kox_count_lines`, `kox_normalize_sub_url`, `kox_decode_subscription_body`,
+  `kox_build_sub_server_list` (VLESS relay первым, затем HY2).
+- **`install.sh`**: загрузка kox-lib до парсинга подписки; смешанные HY2+VLESS подписки.
+- **`kox update-sub`**: те же правила URL и подсчёта строк.
+
 ## 2026.06.30.04
 
 ### 🛠 Fix: watchdog cron missing after upgrade

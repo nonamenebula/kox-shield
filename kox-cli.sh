@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.06.30.04"
+KOX_VERSION="2026.07.07.01"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -767,12 +767,27 @@ kox_update_sub() {
   info "Обновляю подписку: ${W}${KOX_SUB_URL}${N}"
 
   # Fetch subscription (try via VPN first, then direct)
-  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$KOX_SUB_URL" 2>/dev/null)
+  _sub_url=$(kox_normalize_sub_url "${KOX_SUB_URL}" 2>/dev/null || printf '%s' "${KOX_SUB_URL}")
+  RAW=$(curl -fsSL -x socks5h://127.0.0.1:10809 --max-time 15 "$_sub_url" 2>/dev/null)
+  [ -z "$RAW" ] && RAW=$(curl -fsSL --max-time 15 "$_sub_url" 2>/dev/null)
   [ -z "$RAW" ] && { fail "Не удалось получить данные подписки"; return 1; }
 
-  DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-  SERVERS_COUNT=$(printf '%s\n' "$DECODED" | grep -cE "$KOX_URI_GREP")
+  if kox_is_html_payload "$RAW" 2>/dev/null; then
+    fail "Получена HTML (/u/ личный кабинет). Укажите подписку /c/... в kox.conf"
+    return 1
+  fi
+
+  if type kox_decode_subscription_body >/dev/null 2>&1; then
+    DECODED=$(kox_decode_subscription_body "$RAW")
+  else
+    DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
+  fi
+  if type kox_count_lines >/dev/null 2>&1; then
+    SERVERS_COUNT=$(kox_count_lines "$DECODED" "$KOX_URI_GREP")
+  else
+    SERVERS_COUNT=$(printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" 2>/dev/null | wc -l | tr -d ' \n\r')
+  fi
+  case "$SERVERS_COUNT" in ''|*[!0-9]*) SERVERS_COUNT=0 ;; esac
 
   [ "$SERVERS_COUNT" -eq 0 ] && { fail "Серверы (vless/hysteria2) не найдены в подписке"; return 1; }
 

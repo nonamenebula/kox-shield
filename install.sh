@@ -106,13 +106,52 @@ url_decode() {
 
 parse_subscription() {
   SUB_URL="$1"
-  info "Загружаю подписку: $SUB_URL"
-  RAW=$(curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null | base64 -d 2>/dev/null || curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null)
-  [ -z "$RAW" ] && fail "Не удалось загрузить подписку"
+  _ensure_kox_lib_early
 
-  COUNT=$(printf '%s' "$RAW" | grep -cE '^(vless|hysteria2|hy2)://' || echo 0)
+  _norm=$(kox_normalize_sub_url "$SUB_URL" 2>/dev/null || printf '%s' "$SUB_URL")
+  if [ "$_norm" != "$SUB_URL" ]; then
+    warn "Ссылка личного кабинета (/u/) → подписка (/c/)"
+    SUB_URL="$_norm"
+  fi
+
+  info "Загружаю подписку: $SUB_URL"
+  _fetched=$(curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null) || _fetched=""
+  [ -z "$_fetched" ] && fail "Не удалось загрузить подписку (opkg install ca-certificates curl)"
+
+  if kox_is_html_payload "$_fetched" 2>/dev/null; then
+    fail "Получена HTML-страница, а не подписка. Нужна ссылка …/c/TOKEN из раздела «Подписка»"
+  fi
+
+  if type kox_decode_subscription_body >/dev/null 2>&1; then
+    RAW=$(kox_decode_subscription_body "$_fetched")
+  else
+    RAW=$(printf '%s' "$_fetched" | base64 -d 2>/dev/null || printf '%s' "$_fetched")
+  fi
+  [ -z "$RAW" ] && fail "Не удалось декодировать подписку"
+
+  if kox_is_html_payload "$RAW" 2>/dev/null; then
+    fail "Это не подписка VPN. Скопируйте ссылку /c/... (не /u/...)"
+  fi
+
+  if type kox_count_lines >/dev/null 2>&1; then
+    _vless_n=$(kox_count_lines "$RAW" '^vless://')
+    _hy2_n=$(kox_count_lines "$RAW" '^(hysteria2|hy2)://')
+    COUNT=$(kox_count_lines "$RAW" '^(vless|hysteria2|hy2)://')
+  else
+    COUNT=$(printf '%s\n' "$RAW" | grep -E '^(vless|hysteria2|hy2)://' 2>/dev/null | wc -l | tr -d ' \n\r')
+    _vless_n=$(printf '%s\n' "$RAW" | grep -E '^vless://' 2>/dev/null | wc -l | tr -d ' \n\r')
+    _hy2_n=$(printf '%s\n' "$RAW" | grep -E '^(hysteria2|hy2)://' 2>/dev/null | wc -l | tr -d ' \n\r')
+  fi
+  case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
+  case "$_vless_n" in ''|*[!0-9]*) _vless_n=0 ;; esac
+  case "$_hy2_n" in ''|*[!0-9]*) _hy2_n=0 ;; esac
+
   if [ "$COUNT" -eq 0 ]; then
     fail "Серверы (vless/hysteria2) не найдены в подписке"
+  fi
+
+  if [ "$_vless_n" -gt 0 ] && [ "$_hy2_n" -gt 0 ]; then
+    info "Подписка: ${_hy2_n} Hysteria2, ${_vless_n} VLESS — выберите протокол"
   fi
 
   if [ "$COUNT" -eq 1 ]; then
@@ -122,8 +161,13 @@ parse_subscription() {
   fi
 
   TMPLIST="/tmp/.kox-sublist.$$"
-  printf '%s\n' "$RAW" | grep -E '^(vless|hysteria2|hy2)://' > "$TMPLIST" 2>/dev/null
-  COUNT=$(wc -l < "$TMPLIST" | tr -d ' ')
+  if type kox_build_sub_server_list >/dev/null 2>&1; then
+    kox_build_sub_server_list "$RAW" "$TMPLIST"
+  else
+    printf '%s\n' "$RAW" | grep -E '^(vless|hysteria2|hy2)://' > "$TMPLIST" 2>/dev/null
+  fi
+  COUNT=$(wc -l < "$TMPLIST" | tr -d ' \n\r')
+  case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
 
   printf "\n"
   info "${W}Доступно серверов: ${COUNT}${N}"
@@ -155,6 +199,29 @@ parse_subscription() {
   rm -f "$TMPLIST"
   [ -z "$SELECTED_URI" ] && fail "Неверный выбор: $CHOICE"
   _apply_selected_uri "$SELECTED_URI"
+}
+
+_ensure_kox_lib_early() {
+  if [ -f /opt/etc/kox-lib.sh ]; then
+    # shellcheck disable=SC1091
+    . /opt/etc/kox-lib.sh 2>/dev/null
+    return 0
+  fi
+  _local=""
+  if [ -n "$0" ] && [ "$0" != "sh" ] && [ -f "$(dirname "$0")/kox-lib.sh" ]; then
+    _local="$(dirname "$0")/kox-lib.sh"
+  fi
+  if [ -n "$_local" ]; then
+    # shellcheck disable=SC1090
+    . "$_local" 2>/dev/null
+    return 0
+  fi
+  mkdir -p /opt/etc 2>/dev/null || true
+  curl -fsSL --max-time 15 "${GITHUB_RAW}/kox-lib.sh" -o /opt/etc/kox-lib.sh 2>/dev/null || true
+  if [ -f /opt/etc/kox-lib.sh ]; then
+    # shellcheck disable=SC1091
+    . /opt/etc/kox-lib.sh 2>/dev/null
+  fi
 }
 
 _apply_selected_uri() {
@@ -651,6 +718,7 @@ printf " ${W}Настройка VPN подключения${N}\n"
 sep
 printf "\n"
 printf "  Введите ${W}URL подписки${N} (https://...) или ссылку ${W}vless:// / hysteria2://${N}:\n"
+printf "  ${C}Подписка: только HY2, только VLESS или смешанная. Ссылку /u/... заменим на /c/...${N}\n"
 printf "\n"
 ask "→"
 read_tty USER_INPUT
