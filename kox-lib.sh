@@ -190,6 +190,23 @@ kox_read_cli_version() {
   return 1
 }
 
+# Поставить резервный сервер (KOX_BACKUP_HOST) первым в списке для switch-auto.
+kox_prioritize_backup_server() {
+  local BH FILE MATCH TMP
+  BH="${KOX_BACKUP_HOST:-}"
+  [ -z "$BH" ] && return 0
+  FILE="${1:-/tmp/kox-auto-servers.txt}"
+  [ ! -s "$FILE" ] && return 0
+  MATCH=$(grep -F "@${BH}:" "$FILE" 2>/dev/null | head -1)
+  [ -z "$MATCH" ] && MATCH=$(grep -F "$BH" "$FILE" 2>/dev/null | head -1)
+  [ -z "$MATCH" ] && return 0
+  TMP="${FILE}.reorder"
+  grep -Fv "$MATCH" "$FILE" > "$TMP" 2>/dev/null || true
+  printf '%s\n' "$MATCH" > "$FILE"
+  cat "$TMP" >> "$FILE" 2>/dev/null || true
+  rm -f "$TMP"
+}
+
 # BusyBox-safe подсчёт строк по паттерну (не grep -c).
 kox_count_matches() {
   _src="$1"

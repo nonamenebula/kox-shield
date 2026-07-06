@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.17"
+KOX_VERSION="2026.07.07.18"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -2161,8 +2161,13 @@ kox_switch_auto() {
     fail "Не удалось получить список серверов (подписка и кэш недоступны)"
     return 1
   fi
+  load_conf
+  kox_prioritize_backup_server /tmp/kox-auto-servers.txt
   if [ ! -s /tmp/kox-cli-servers.txt ] && [ -s /tmp/kox-auto-servers.txt ]; then
     cp /tmp/kox-auto-servers.txt /tmp/kox-servers.txt 2>/dev/null || true
+  fi
+  if [ -n "${KOX_BACKUP_HOST:-}" ] && [ "$QUIET" != "--quiet" ]; then
+    info "Резервный сервер: ${W}${KOX_BACKUP_REMARK:-$KOX_BACKUP_HOST}${N} — проверяю первым"
   fi
 
   # Current active server — skip it (it's presumably broken)
