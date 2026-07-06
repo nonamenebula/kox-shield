@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.05
+
+### 🛠 Fix: зеркало на kox.nonamenebula.ru (без GitHub/DNS)
+
+- Все загрузки (`kox-cli`, `kox-lib`, watchdog, hysteria) — **сначала**
+  `https://kox.nonamenebula.ru/static/kox-shield/`, затем GitHub.
+- Hysteria `mipsle` выложен на зеркало (роутеры Keenetic без доступа к githubusercontent).
+
 ## 2026.07.07.04
 
 ### 🛠 Fix: uri_host + кривые цвета на BusyBox Keenetic
