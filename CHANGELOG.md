@@ -1,5 +1,11 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.13
+
+### 🛠 Fix: syntax error в kox-lib.sh (kox_count_lines)
+
+- Восстановлена функция `kox_count_lines` — ломала запуск `kox` на роутере.
+
 ## 2026.07.07.12
 
 ### 🛠 Fix: `kox clean-legacy` не принимал «y» на Keenetic
