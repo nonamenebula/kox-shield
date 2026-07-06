@@ -162,7 +162,7 @@ kox_curl_fetch() {
   return 1
 }
 
-# Скачать файл: сначала зеркало KOX (kox.nonamenebula.ru), затем GitHub.
+# Скачать файл: сначала GitHub, при недоступности — зеркало KOX CDN.
 kox_fetch_to_file() {
   _file="$1"
   _dest="$2"
@@ -185,11 +185,11 @@ kox_fetch_to_file() {
     return 1
   }
 
-  if _try_dl "${KOX_CDN}/${_file}"; then return 0; fi
   if _try_dl "${GITHUB_RAW}/${_file}"; then return 0; fi
+  if _try_dl "${KOX_CDN}/${_file}"; then return 0; fi
   if [ -x /opt/bin/wget ]; then
-    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "${KOX_CDN}/${_file}" 2>/dev/null && [ -s "$_dest" ] && return 0
     /opt/bin/wget -qO "$_dest" -4 -T "$_max" "${GITHUB_RAW}/${_file}" 2>/dev/null && [ -s "$_dest" ] && return 0
+    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "${KOX_CDN}/${_file}" 2>/dev/null && [ -s "$_dest" ] && return 0
   fi
   return 1
 }
