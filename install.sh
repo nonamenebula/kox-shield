@@ -67,12 +67,93 @@ check_entware() {
   ok "Entware найден"
 }
 
+# CA bundle + curl до загрузки подписки (иначе HTTPS падает, а ping проходит).
+ensure_https_tools() {
+  info "Проверяю HTTPS (curl, ca-certificates)..."
+  /opt/bin/opkg update >/dev/null 2>&1 || warn "opkg update завершился с ошибкой"
+
+  if ! command -v curl >/dev/null 2>&1 && [ ! -x /opt/bin/curl ]; then
+    info "Устанавливаю curl..."
+    /opt/bin/opkg install curl >/dev/null 2>&1 || warn "Не удалось установить curl"
+  fi
+
+  if ! /opt/bin/opkg list-installed 2>/dev/null | grep -q '^ca-certificates '; then
+    info "Устанавливаю ca-certificates..."
+    /opt/bin/opkg install ca-certificates >/dev/null 2>&1 || warn "Не удалось установить ca-certificates"
+  fi
+
+  if [ -f /opt/etc/ssl/certs/ca-certificates.crt ]; then
+    export SSL_CERT_FILE=/opt/etc/ssl/certs/ca-certificates.crt
+    export CURL_CA_BUNDLE=/opt/etc/ssl/certs/ca-certificates.crt
+  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+  fi
+
+  _curl=""
+  if [ -x /opt/bin/curl ]; then _curl=/opt/bin/curl
+  elif command -v curl >/dev/null 2>&1; then _curl=curl
+  fi
+
+  if [ -n "$_curl" ] && "$_curl" -fsSL -4 --max-time 12 https://kox.nonamenebula.ru/healthz -o /dev/null 2>/dev/null; then
+    ok "HTTPS работает"
+    return 0
+  fi
+  if [ -n "$_curl" ] && "$_curl" -fsSL --max-time 12 https://github.com -o /dev/null 2>/dev/null; then
+    ok "HTTPS работает (github.com)"
+    return 0
+  fi
+  warn "HTTPS не проверен — при ошибке загрузки: opkg install ca-certificates curl"
+}
+
+# Загрузка URL: IPv4, CA bundle, повторы, wget fallback.
+kox_curl_fetch() {
+  _url="$1"
+  _curl=""
+  if [ -x /opt/bin/curl ]; then _curl=/opt/bin/curl
+  elif command -v curl >/dev/null 2>&1; then _curl=curl
+  fi
+  _ca="${CURL_CA_BUNDLE:-}"
+  [ -z "$_ca" ] && [ -f /opt/etc/ssl/certs/ca-certificates.crt ] && _ca=/opt/etc/ssl/certs/ca-certificates.crt
+
+  _try_curl() {
+    _c="$1"
+    shift
+    _body=$("$_c" "$@" 2>/dev/null) || return 1
+    [ -n "$_body" ] || return 1
+    printf '%s' "$_body"
+    return 0
+  }
+
+  if [ -n "$_curl" ]; then
+    if [ -n "$_ca" ]; then
+      _try_curl "$_curl" -fsSL -4 --max-time 25 --cacert "$_ca" "$_url" && return 0
+    fi
+    _try_curl "$_curl" -fsSL -4 --max-time 25 "$_url" && return 0
+    _try_curl "$_curl" -fsSL --max-time 25 "$_url" && return 0
+    if [ -n "$_ca" ]; then
+      _try_curl "$_curl" -sSL -4 --max-time 25 --cacert "$_ca" "$_url" && return 0
+    fi
+  fi
+
+  if [ -x /opt/bin/wget ]; then
+    _wbody=$(/opt/bin/wget -qO- -4 -T 25 "$_url" 2>/dev/null) && [ -n "$_wbody" ] && {
+      printf '%s' "$_wbody"
+      return 0
+    }
+  fi
+  return 1
+}
+
 check_internet() {
-  # BusyBox wget не поддерживает HTTPS — используем curl
-  if curl -fsSL --max-time 10 --silent https://github.com -o /dev/null 2>/dev/null; then
+  if kox_curl_fetch "https://github.com" >/dev/null 2>&1; then
+    ok "Интернет доступен (HTTPS)"
+  elif curl -fsSL --max-time 10 --silent https://github.com -o /dev/null 2>/dev/null; then
     ok "Интернет доступен"
   elif ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
     ok "Интернет доступен (ping)"
+    warn "HTTPS не отвечает — установлю ca-certificates и curl"
+    ensure_https_tools
   else
     fail "Нет доступа к интернету с роутера"
   fi
@@ -115,8 +196,18 @@ parse_subscription() {
   fi
 
   info "Загружаю подписку: $SUB_URL"
-  _fetched=$(curl -fsSL --max-time 15 "$SUB_URL" 2>/dev/null) || _fetched=""
-  [ -z "$_fetched" ] && fail "Не удалось загрузить подписку (opkg install ca-certificates curl)"
+  _fetched=$(kox_curl_fetch "$SUB_URL") || _fetched=""
+  if [ -z "$_fetched" ]; then
+    ensure_https_tools
+    _fetched=$(kox_curl_fetch "$SUB_URL") || _fetched=""
+  fi
+  if [ -z "$_fetched" ]; then
+    fail "Не удалось загрузить подписку по HTTPS.
+  На роутере выполните:
+    opkg update && opkg install ca-certificates curl wget-ssl
+  Проверка:
+    curl -4 -v \"$SUB_URL\""
+  fi
 
   if kox_is_html_payload "$_fetched" 2>/dev/null; then
     fail "Получена HTML-страница, а не подписка. Нужна ссылка …/c/TOKEN из раздела «Подписка»"
@@ -768,6 +859,7 @@ banner
 # 1. Проверки
 info "Проверяю окружение..."
 check_entware
+ensure_https_tools
 check_internet
 
 # 2. Получить URL подписки или VLESS URL
