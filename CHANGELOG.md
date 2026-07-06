@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.16
+
+### 🛠 Fix: `kox upgrade` очень медленный на Keenetic
+
+- Загрузка скриптов при upgrade: **CDN первым**, GitHub 6 с (не 30×6).
+- BusyBox `wget` не используется для `https://` (не умеет SSL).
+- `curl` + прогресс по файлам; `kox_ensure_https_tools` перед upgrade.
+
 ## 2026.07.07.15
 
 ### 🛠 Fix: `kox upgrade` медленный и пустой CHANGELOG
