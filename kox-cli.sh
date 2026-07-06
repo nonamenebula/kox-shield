@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.14"
+KOX_VERSION="2026.07.07.15"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -1712,7 +1712,7 @@ kox_upgrade() {
 
   _ver_tmp="/tmp/kox-remote-ver.$$"
   REMOTE_VERSION=""
-  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+  if kox_fetch_repo_meta "VERSION" "$_ver_tmp" 12; then
     REMOTE_VERSION=$(tr -d '[:space:]' < "$_ver_tmp")
   fi
   rm -f "$_ver_tmp"
@@ -1735,7 +1735,9 @@ kox_upgrade() {
   sep
 
   _cl_tmp="/tmp/kox-changelog.$$"
-  if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
+  _cl_ok=0
+  if kox_fetch_repo_meta "CHANGELOG.md" "$_cl_tmp" 15; then
+    _cl_ok=1
     _cl_range=$(kox_changelog_between "$KOX_VERSION" "$REMOTE_VERSION" "$_cl_tmp" 100)
     if [ -n "$_cl_range" ]; then
       _ver_count=$(printf '%s\n' "$_cl_range" | grep -c '^## ' 2>/dev/null || echo 0)
@@ -1753,11 +1755,22 @@ kox_upgrade() {
         esac
       done
     else
-      info "${W}Что нового в v${REMOTE_VERSION}:${N}"
-      awk '/^## /{if(found)exit; found=1; next} found{print}' "$_cl_tmp" 2>/dev/null | \
-        grep -v '^[[:space:]]*$' | \
-        while IFS= read -r LINE; do printf "  ${C}%s${N}\n" "$LINE"; done
+      _cl_one=$(awk -v ver="$REMOTE_VERSION" '
+        $0 == "## " ver { found=1; next }
+        found && /^## / { exit }
+        found && !/^[[:space:]]*$/ { print }
+      ' "$_cl_tmp" 2>/dev/null)
+      if [ -n "$_cl_one" ]; then
+        info "${W}Что нового в v${REMOTE_VERSION}:${N}"
+        printf '%s\n' "$_cl_one" | while IFS= read -r LINE; do
+          printf "  ${C}%s${N}\n" "$LINE"
+        done
+      else
+        warn "Не удалось разобрать CHANGELOG (обновление всё равно доступно)"
+      fi
     fi
+  else
+    warn "CHANGELOG недоступен (CDN / GitHub) — список изменений пропущен"
   fi
   rm -f "$_cl_tmp"
 
@@ -1767,14 +1780,11 @@ kox_upgrade() {
   if [ "$FORCE" != "--force" ]; then
     printf "\n"
     printf "  Установить обновление? [y/N] "
-    read -r ANSWER </dev/tty 2>/dev/null || ANSWER=""
-    case "$ANSWER" in
-      y|Y|yes|YES|д|Д) : ;;
-      *)
+    kox_read_tty ANSWER
+    if ! kox_confirm_yes "$ANSWER"; then
         info "Обновление отменено"
         return 0
-        ;;
-    esac
+    fi
   fi
 
   info "Загружаю обновление..."

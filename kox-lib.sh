@@ -107,6 +107,16 @@ kox_fetch_repo_file() {
   return 1
 }
 
+# VERSION / CHANGELOG — сначала CDN (быстро), затем GitHub (короткий таймаут).
+kox_fetch_repo_meta() {
+  _rel="$1"
+  _dest="$2"
+  _max="${3:-12}"
+  kox_fetch_url_to_file "${KOX_CDN}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${GITHUB_RAW}/${_rel}" "$_dest" 8 && return 0
+  return 1
+}
+
 # Активен ли QUIC-блок (UDP/443 → DROP на LAN).
 kox_quic_block_active() {
   iptables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
@@ -170,7 +180,7 @@ kox_changelog_between() {
   _to_i=$(kox_version_to_int "$_to")
   [ -z "$_from_i" ] || [ -z "$_to_i" ] && return 1
   awk -v from="$_from_i" -v to="$_to_i" -v max="$_max" '
-    /^## [0-9]{4}\.[0-9]{2}\.[0-9]{2}/ {
+    /^## [0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+/ {
       ver = $2
       gsub(/\./, "", ver)
       show = (ver + 0 > from + 0 && ver + 0 <= to + 0)
