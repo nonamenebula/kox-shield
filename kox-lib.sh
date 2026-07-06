@@ -153,6 +153,9 @@ kox_confirm_yes() {
   esac
   return 1
 }
+
+# BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
+kox_count_lines() {
   _text="$1"
   _pat="$2"
   _n=$(printf '%s\n' "$_text" | grep -E "$_pat" 2>/dev/null | wc -l | tr -d ' \n\r')
