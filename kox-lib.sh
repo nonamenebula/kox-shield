@@ -72,6 +72,33 @@ kox_fetch_repo_file() {
   return 1
 }
 
+# Активен ли QUIC-блок (UDP/443 → DROP на LAN).
+kox_quic_block_active() {
+  iptables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
+  ip6tables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
+  return 1
+}
+
+# Скачать и установить 99-kox-nat.sh (CDN / GitHub).
+kox_install_nat_script() {
+  _dest="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+  mkdir -p /opt/etc/ndm/netfilter.d
+  if kox_fetch_repo_file "99-kox-nat.sh" "$_dest" 15 && [ -s "$_dest" ]; then
+    chmod +x "$_dest"
+    return 0
+  fi
+  return 1
+}
+
+# Применить NAT + QUIC-блок (IPv4 и IPv6).
+kox_apply_nat_rules() {
+  _nat="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
+  [ -f "$_nat" ] || return 1
+  sh "$_nat" 2>/dev/null || return 1
+  sh "$_nat" ip6tables 2>/dev/null || true
+  return 0
+}
+
 # BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
 kox_count_lines() {
   _text="$1"

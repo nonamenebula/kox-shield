@@ -1,5 +1,14 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.09
+
+### 🛠 Fix: QUIC-блок не применялся после upgrade
+
+- **`99-kox-nat.sh`** вынесен в репозиторий; `kox upgrade` и **`kox fix-nat`**
+  скачивают актуальную версию с CDN/GitHub.
+- Проверка статуса через `iptables -C` (раньше grep не видел порт `https`).
+- `kox on` применяет правила IPv4 + IPv6.
+
 ## 2026.07.07.08
 
 ### 🛠 Fix: YouTube не открывается (QUIC / UDP 443)

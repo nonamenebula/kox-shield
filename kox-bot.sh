@@ -731,9 +731,14 @@ ${ROLLBACK_STATUS}
 
 h_on() {
   local CHAT="$1"
-  NAT=$(ls /opt/etc/ndm/netfilter.d/*nat.sh 2>/dev/null | head -1)
   rm -f /tmp/kox-vpn-off
-  if [ -n "$NAT" ] && sh "$NAT" 2>/dev/null; then
+  if type kox_apply_nat_rules >/dev/null 2>&1 && kox_apply_nat_rules; then
+    update_menu "$CHAT" "✅ <b>VPN включён</b>
+
+iptables правила применены.
+Трафик идёт через VLESS туннель."
+  elif NAT=$(ls /opt/etc/ndm/netfilter.d/*nat.sh 2>/dev/null | head -1) && [ -n "$NAT" ] && sh "$NAT" 2>/dev/null; then
+    sh "$NAT" ip6tables 2>/dev/null || true
     update_menu "$CHAT" "✅ <b>VPN включён</b>
 
 iptables правила применены.
