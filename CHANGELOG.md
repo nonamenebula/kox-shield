@@ -1,5 +1,13 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.03
+
+### 🛠 Fix: загрузка подписки по HTTPS на Keenetic
+
+- **`ensure_https_tools`**: до ввода подписки ставит `curl` + `ca-certificates`, задаёт
+  `CURL_CA_BUNDLE`.
+- **`kox_curl_fetch`**: IPv4 (`-4`), `--cacert`, повтор после установки CA, fallback wget.
+
 ## 2026.07.07.02
 
 ### 🛠 Fix: `uri_host: not found` при выборе HY2 до install_packages
