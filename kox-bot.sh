@@ -1585,9 +1585,14 @@ h_clean_legacy() {
 
   # Run detection
   FOUND_KVAS=false;   [ -f /opt/etc/init.d/S96kvas ] || [ -f /opt/bin/kvas ] || [ -d /opt/apps/kvas ] && FOUND_KVAS=true
-  FOUND_SS=false;     { [ -f /opt/etc/init.d/S22shadowsocks ] || pgrep -x ss-redir >/dev/null 2>&1; } && FOUND_SS=true
+  FOUND_SS=false
+  { [ -f /opt/etc/init.d/S22shadowsocks ] || pgrep -x ss-redir >/dev/null 2>&1; } && FOUND_SS=true
+  FOUND_HABR=false
+  { [ -f /opt/etc/ndm/netfilter.d/100-redirect.sh ] || [ -f /opt/etc/unblock.txt ] \
+    || ipset list unblock >/dev/null 2>&1 \
+    || iptables-save 2>/dev/null | grep -qE 'match-set unblock|:1082'; } && FOUND_HABR=true
   FOUND_SB=false;     { [ -f /opt/sbin/sing-box ] && pgrep -x sing-box >/dev/null 2>&1; } && FOUND_SB=true
-  FOUND_IPT=false;    iptables -t nat -L PREROUTING -n 2>/dev/null | grep -qE 'REDIRECT.*:1(080|181|090)' && FOUND_IPT=true
+  FOUND_IPT=false;    iptables-save 2>/dev/null | grep -qE 'match-set unblock|:108[02]|:1181' && FOUND_IPT=true
 
   SOCKS_IFACES=""
   if command -v ndmc >/dev/null 2>&1; then
@@ -1600,9 +1605,10 @@ h_clean_legacy() {
   FOUND_ANY=false
   REPORT=""
   $FOUND_KVAS  && FOUND_ANY=true && REPORT="${REPORT}❌ Kvass (KVAS)\n"
-  $FOUND_SS    && FOUND_ANY=true && REPORT="${REPORT}❌ Shadowsocks\n"
+  $FOUND_SS    && FOUND_ANY=true && REPORT="${REPORT}❌ Shadowsocks (ss-redir)\n"
+  $FOUND_HABR  && FOUND_ANY=true && REPORT="${REPORT}❌ Habr SS: ipset/1082/DNS DNAT\n"
   $FOUND_SB    && FOUND_ANY=true && REPORT="${REPORT}❌ sing-box\n"
-  $FOUND_IPT   && FOUND_ANY=true && REPORT="${REPORT}❌ Старые iptables SOCKS-правила\n"
+  $FOUND_IPT   && FOUND_ANY=true && REPORT="${REPORT}❌ Старые iptables (unblock/1082)\n"
   [ -n "$SOCKS_IFACES" ] && FOUND_ANY=true && REPORT="${REPORT}❌ SOCKS-интерфейсы Keenetic: $(printf '%s' "$SOCKS_IFACES" | tr '\n' ' ')\n"
 
   if ! $FOUND_ANY; then

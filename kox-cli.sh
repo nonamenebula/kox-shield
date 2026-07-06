@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.10"
+KOX_VERSION="2026.07.07.11"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -395,7 +395,7 @@ kox_help() {
   printf "  ${G}kox list-remove all${N}            — удалить все категории\n"
   printf "  ${G}kox list-check${N}                 — проверить обновления\n"
   printf "  ${G}kox list-update${N}                — обновить списки (GitHub / зеркало)\n\n"
-  printf "  ${G}kox clean-legacy${N}     — удалить старые VPN (Kvass, Shadowsocks, SOCKS)\n"
+  printf "  ${G}kox clean-legacy${N}     — удалить Kvass, Habr/Shadowsocks, SOCKS\n"
   printf "  ${G}kox update-sub${N}       — обновить серверные параметры из подписки\n"
   printf "  ${G}kox sub set <URL>${N}    — задать URL подписки\n"
   printf "  ${G}kox sub get${N}          — показать текущий URL подписки\n"
@@ -872,6 +872,125 @@ kox_cron_disable() {
   ok "Авто-обновление отключено"
 }
 
+# ── Habr Shadowsocks (663862): ipset unblock, 100-redirect.sh, dnsmasq ──
+
+_clean_detect_habr_ss() {
+  FOUND_HABR=false
+  HABR_REPORT=""
+
+  if [ -f /opt/etc/ndm/netfilter.d/100-redirect.sh ]; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} /opt/etc/ndm/netfilter.d/100-redirect.sh\n"
+  fi
+  if [ -f /opt/etc/unblock.txt ] || [ -f /opt/bin/unblock_ipset.sh ]; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} unblock.txt / unblock_*.sh\n"
+  fi
+  if [ -f /opt/etc/init.d/S99unblock ]; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} S99unblock (автозапуск ipset)\n"
+  fi
+  if ipset list unblock >/dev/null 2>&1; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} ipset «unblock» (активен)\n"
+  fi
+  if iptables-save 2>/dev/null | grep -qE 'match-set unblock|:1082'; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} iptables REDIRECT → порт 1082 (ipset unblock)\n"
+  fi
+  if iptables-save 2>/dev/null | grep -qE 'dpt:53.*DNAT'; then
+    if iptables-save 2>/dev/null | grep 'dpt:53' | grep -q DNAT; then
+      FOUND_HABR=true
+      HABR_REPORT="${HABR_REPORT}  ${Y}→${N} iptables DNAT DNS (порт 53 → роутер)\n"
+    fi
+  fi
+  if [ -f /opt/etc/dnsmasq.conf ] && grep -q 'unblock.dnsmasq' /opt/etc/dnsmasq.conf 2>/dev/null; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} Entware dnsmasq + unblock.dnsmasq\n"
+  fi
+  if crontab -l 2>/dev/null | grep -q unblock_ipset; then
+    FOUND_HABR=true
+    HABR_REPORT="${HABR_REPORT}  ${Y}→${N} cron: unblock_ipset.sh\n"
+  fi
+}
+
+_clean_habr_iptables() {
+  info "Снимаю правила Habr (ipset unblock, порт 1082, DNS DNAT)..."
+  _n=0
+  while [ "$_n" -lt 20 ]; do
+    _n=$((_n + 1))
+    iptables -t nat -D PREROUTING -i br0 -p tcp -m set --match-set unblock dst -j REDIRECT --to-ports 1082 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p udp -m set --match-set unblock dst -j REDIRECT --to-ports 1082 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp -m set --match-set unblock dst -j REDIRECT --to-port 1082 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p udp -m set --match-set unblock dst -j REDIRECT --to-port 1082 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp -m set --match-set unblock dst -j REDIRECT --to-ports 1181 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp -m set --match-set unblock dst -j REDIRECT --to-ports 1080 2>/dev/null || true
+  done
+  for PORT in 1082 1080 1081 1181 1090; do
+    _n=0
+    while [ "$_n" -lt 10 ]; do
+      _n=$((_n + 1))
+      iptables -t nat -D PREROUTING -p tcp -j REDIRECT --to-ports "$PORT" 2>/dev/null || break
+    done
+  done
+  for IP in 192.168.1.1 192.168.0.1 10.0.0.1 192.168.50.1 192.168.2.1; do
+    iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$IP" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$IP" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination "${IP}:53" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination "${IP}:53" 2>/dev/null || true
+  done
+  if [ -f /opt/etc/dnsmasq.conf ]; then
+    grep -oE 'listen-address=[0-9.]+' /opt/etc/dnsmasq.conf 2>/dev/null | cut -d= -f2 | while IFS= read -r IP; do
+      [ -z "$IP" ] || [ "$IP" = "127.0.0.1" ] && continue
+      iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$IP" 2>/dev/null || true
+      iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$IP" 2>/dev/null || true
+    done
+  fi
+  ipset flush unblock 2>/dev/null || true
+  ipset destroy unblock 2>/dev/null || true
+  ok "iptables/ipset Habr сняты"
+}
+
+_clean_habr_files() {
+  info "Удаляю файлы Habr Shadowsocks..."
+  /opt/etc/init.d/S99unblock stop 2>/dev/null || true
+  if [ -x /opt/etc/init.d/S56dnsmasq ] && [ -f /opt/etc/dnsmasq.conf ] \
+      && grep -q 'unblock.dnsmasq' /opt/etc/dnsmasq.conf 2>/dev/null; then
+    /opt/etc/init.d/S56dnsmasq stop 2>/dev/null || true
+    sed -i '/unblock\.dnsmasq/d' /opt/etc/dnsmasq.conf 2>/dev/null || true
+    ok "Entware dnsmasq (unblock) остановлен"
+  fi
+  rm -f /opt/etc/ndm/netfilter.d/100-redirect.sh \
+        /opt/etc/ndm/fs.d/100-ipset.sh \
+        /opt/etc/unblock.txt \
+        /opt/etc/unblock.dnsmasq \
+        /opt/bin/unblock_ipset.sh \
+        /opt/bin/unblock_dnsmasq.sh \
+        /opt/bin/unblock_update.sh \
+        /opt/etc/init.d/S99unblock \
+        /opt/etc/shadowsocks.json 2>/dev/null
+  if crontab -l 2>/dev/null | grep -q unblock_ipset; then
+    crontab -l 2>/dev/null | grep -v unblock_ipset | crontab - 2>/dev/null || true
+    ok "Cron unblock_ipset удалён"
+  fi
+  ok "Файлы Habr удалены"
+}
+
+_clean_habr_shadowsocks() {
+  if [ -f /opt/etc/init.d/S22shadowsocks ]; then
+    info "Останавливаю Shadowsocks..."
+    sed -i 's/^ENABLED=yes/ENABLED=no/' /opt/etc/init.d/S22shadowsocks 2>/dev/null || true
+    /opt/etc/init.d/S22shadowsocks stop 2>/dev/null || true
+    killall ss-redir ss-local 2>/dev/null || true
+    rm -f /opt/etc/init.d/S22shadowsocks 2>/dev/null || true
+    ok "Shadowsocks (S22) удалён"
+  else
+    killall ss-redir ss-local 2>/dev/null || true
+  fi
+  _clean_habr_iptables
+  _clean_habr_files
+}
+
 kox_clean_legacy() {
   FORCE_MODE=false
   [ "${1:-}" = "--force" ] && FORCE_MODE=true
@@ -896,7 +1015,14 @@ kox_clean_legacy() {
   FOUND_SS=false
   if [ -f /opt/etc/init.d/S22shadowsocks ] || pgrep -x ss-redir >/dev/null 2>&1 || pgrep -x ss-local >/dev/null 2>&1; then
     FOUND_SS=true; FOUND_ANY=true
-    warn "Найден: ${Y}Shadowsocks${N}"
+    warn "Найден: ${Y}Shadowsocks${N} (ss-redir / S22shadowsocks)"
+  fi
+
+  _clean_detect_habr_ss
+  if $FOUND_HABR; then
+    FOUND_ANY=true
+    warn "Найден: ${R}Habr Shadowsocks${N} (остатки ipset/iptables/dnsmasq):"
+    printf '%b' "$HABR_REPORT"
   fi
 
   FOUND_SINGBOX=false
@@ -905,11 +1031,15 @@ kox_clean_legacy() {
     warn "Найден: ${Y}sing-box${N} (запущен)"
   fi
 
-  # Detect stray SOCKS iptables rules (port 1080 or 1181, not our 10808)
+  # Detect stray SOCKS iptables rules (port 1080–1181, 1082 Habr, not our 10808)
   FOUND_IPT=false
-  if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -qE 'REDIRECT.*:1(080|181|090)'; then
+  if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -qE 'REDIRECT.*:1(082|080|181|090)'; then
     FOUND_IPT=true; FOUND_ANY=true
-    warn "Найдены: старые правила iptables (SOCKS port 1080/1181)"
+    warn "Найдены: старые правила iptables (SOCKS 1082/1080/1181)"
+  fi
+  if iptables-save 2>/dev/null | grep -q 'match-set unblock'; then
+    FOUND_IPT=true; FOUND_ANY=true
+    warn "Найдены: iptables ipset «unblock» (Habr/Kvass)"
   fi
 
   # Detect Keenetic SOCKS interfaces (type=Socks in ndmc)
@@ -929,11 +1059,15 @@ kox_clean_legacy() {
     fi
   fi
 
-  # Check for old dnsmasq socks configs
+  # Check for old dnsmasq / Habr unblock configs
   FOUND_DNS=false
   if ls /opt/etc/dnsmasq.d/kvas*.conf /opt/etc/kvas.dnsmasq 2>/dev/null | grep -q .; then
     FOUND_DNS=true; FOUND_ANY=true
     warn "Найдены: старые DNS-правила KVAS"
+  fi
+  if [ -f /opt/etc/dnsmasq.conf ] && grep -q 'unblock.dnsmasq' /opt/etc/dnsmasq.conf 2>/dev/null; then
+    FOUND_DNS=true; FOUND_ANY=true
+    warn "Найден: Entware dnsmasq (Habr unblock.dnsmasq)"
   fi
 
   printf "\n"
@@ -982,13 +1116,11 @@ kox_clean_legacy() {
     ok "Kvass удалён"
   fi
 
-  # ── Clean Shadowsocks ────────────────────────────────────────────
-  if $FOUND_SS; then
-    info "Останавливаю Shadowsocks..."
-    sed -i 's/^ENABLED=yes/ENABLED=no/' /opt/etc/init.d/S22shadowsocks 2>/dev/null || true
-    /opt/etc/init.d/S22shadowsocks stop 2>/dev/null || true
-    killall ss-redir ss-local 2>/dev/null || true
-    ok "Shadowsocks отключён"
+  # ── Habr Shadowsocks (https://habr.com/ru/articles/663862/) ─────
+  if $FOUND_SS || $FOUND_HABR; then
+    _clean_habr_shadowsocks
+  elif $FOUND_IPT && iptables-save 2>/dev/null | grep -qE 'unblock|:1082'; then
+    _clean_habr_iptables
   fi
 
   # ── Clean sing-box ───────────────────────────────────────────────
@@ -998,12 +1130,15 @@ kox_clean_legacy() {
     ok "sing-box остановлен"
   fi
 
-  # ── Clean old iptables rules ─────────────────────────────────────
+  # ── Clean old iptables rules (generic) ───────────────────────────
   if $FOUND_IPT; then
-    info "Удаляю старые правила iptables..."
-    for PORT in 1080 1081 1090 1181; do
-      iptables -t nat -D PREROUTING -j REDIRECT --to-ports $PORT 2>/dev/null || true
-      iptables -t nat -D PREROUTING -p tcp -j REDIRECT --to-ports $PORT 2>/dev/null || true
+    info "Удаляю прочие старые правила iptables..."
+    for PORT in 1082 1080 1081 1090 1181; do
+      _n=0
+      while [ "$_n" -lt 8 ]; do
+        _n=$((_n + 1))
+        iptables -t nat -D PREROUTING -p tcp -j REDIRECT --to-ports "$PORT" 2>/dev/null || break
+      done
     done
     ok "Старые правила iptables удалены"
   fi
@@ -1011,6 +1146,10 @@ kox_clean_legacy() {
   # ── Clean old DNS rules ──────────────────────────────────────────
   if $FOUND_DNS; then
     rm -f /opt/etc/dnsmasq.d/kvas*.conf /opt/etc/kvas.dnsmasq 2>/dev/null
+    if [ -f /opt/etc/dnsmasq.conf ] && grep -q 'unblock.dnsmasq' /opt/etc/dnsmasq.conf 2>/dev/null; then
+      /opt/etc/init.d/S56dnsmasq stop 2>/dev/null || true
+      sed -i '/unblock\.dnsmasq/d' /opt/etc/dnsmasq.conf 2>/dev/null || true
+    fi
     /opt/etc/init.d/S56dnsmasq restart 2>/dev/null || true
     ok "Старые DNS-правила удалены"
   fi
@@ -1027,7 +1166,24 @@ kox_clean_legacy() {
   printf "\n"
   sep
   ok "${W}Очистка завершена!${N}"
-  info "Рекомендуется перезапустить роутер: ${W}reboot${N}"
+
+  # Восстановить правила KOX после снятия Habr
+  if [ ! -f /tmp/kox-vpn-off ] && pgrep xray >/dev/null 2>&1; then
+    info "Применяю правила KOX Shield..."
+    if type kox_apply_nat_rules >/dev/null 2>&1; then
+      kox_apply_nat_rules 2>/dev/null && ok "NAT KOX применён (QUIC-блок + XRAY_REDIRECT)"
+    elif [ -f /opt/etc/ndm/netfilter.d/99-kox-nat.sh ]; then
+      sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh 2>/dev/null
+      sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh ip6tables 2>/dev/null || true
+      ok "NAT KOX применён"
+    fi
+  fi
+
+  info "Рекомендуется перезагрузить роутер: ${W}reboot${N}"
+  if [ -f /opt/etc/dnsmasq.conf ] && grep -q 'listen-address=192.168' /opt/etc/dnsmasq.conf 2>/dev/null; then
+    warn "Если DNS «плывёт» — в веб-интерфейсе Keenetic отключите «Перенаправление DNS» (opkg dns-override)"
+  fi
+  info "Опционально: ${W}opkg remove shadowsocks-libev-ss-redir shadowsocks-libev-config${N}"
   sep
   printf "\n"
 }

@@ -1,5 +1,14 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.11
+
+### 🛠 Fix: `kox clean-legacy` — полная очистка Habr Shadowsocks
+
+- Удаляет остатки [инструкции Habr 663862](https://habr.com/ru/articles/663862/):
+  `100-redirect.sh`, ipset `unblock`, REDIRECT на порт **1082**, DNS DNAT :53,
+  `unblock_*.sh`, `S99unblock`, Entware dnsmasq.
+- После очистки автоматически применяет NAT KOX (99-kox-nat + QUIC-блок).
+
 ## 2026.07.07.10
 
 ### 🛠 Fix: загрузка с CDN при сбое DNS
