@@ -1,5 +1,12 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.07.10
+
+### 🛠 Fix: загрузка с CDN при сбое DNS
+
+- Если `kox.nonamenebula.ru` не резолвится — fallback по IP `185.154.193.130`
+  + заголовок `Host:` (wget/curl на Keenetic).
+
 ## 2026.07.07.09
 
 ### 🛠 Fix: QUIC-блок не применялся после upgrade

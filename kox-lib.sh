@@ -4,6 +4,7 @@
 
 KOX_URI_GREP='^(vless|hysteria2|hy2)://'
 KOX_RELAY_HOST="${KOX_RELAY_HOST:-kox.nonamenebula.ru}"
+KOX_CDN_IP="${KOX_CDN_IP:-185.154.193.130}"
 KOX_CDN="${KOX_CDN:-https://kox.nonamenebula.ru/static/kox-shield}"
 GITHUB_RAW="${GITHUB_RAW:-https://raw.githubusercontent.com/nonamenebula/kox-shield/main}"
 KOX_LISTS_CDN="${KOX_LISTS_CDN:-${KOX_CDN}/lists}"
@@ -20,20 +21,54 @@ kox_fetch_url_to_file() {
   fi
   _ca="${CURL_CA_BUNDLE:-}"
   [ -z "$_ca" ] && [ -f /opt/etc/ssl/certs/ca-certificates.crt ] && _ca=/opt/etc/ssl/certs/ca-certificates.crt
-  if [ -n "$_curl" ]; then
-    if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+
+  _try_curl() {
+    [ -n "$_curl" ] || return 1
+    if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" "$1" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
       return 0
     fi
-    if "$_curl" -fsSL -4 --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+    if "$_curl" -fsSL -4 --max-time "$_max" "$1" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
       return 0
     fi
-    if "$_curl" -fsSL --max-time "$_max" "$_url" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+    if "$_curl" -fsSL --max-time "$_max" "$1" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
       return 0
     fi
-  fi
-  if [ -x /opt/bin/wget ]; then
-    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "$_url" 2>/dev/null && [ -s "$_dest" ] && return 0
-  fi
+    return 1
+  }
+
+  _try_wget() {
+    [ -x /opt/bin/wget ] || return 1
+    /opt/bin/wget -qO "$_dest" -4 -T "$_max" "$1" 2>/dev/null && [ -s "$_dest" ] && return 0
+    return 1
+  }
+
+  _try_curl "$_url" && return 0
+  _try_wget "$_url" && return 0
+
+  # DNS на роутере часто не резолвит kox.nonamenebula.ru — пробуем по IP + Host
+  case "$_url" in
+    https://kox.nonamenebula.ru/*|http://kox.nonamenebula.ru/*)
+      _path=${_url#*kox.nonamenebula.ru}
+      _ipurl="https://${KOX_CDN_IP}${_path}"
+      if [ -n "$_curl" ]; then
+        if [ -n "$_ca" ] && "$_curl" -fsSL -4 --max-time "$_max" --cacert "$_ca" \
+            -H "Host: kox.nonamenebula.ru" --resolve "kox.nonamenebula.ru:443:${KOX_CDN_IP}" \
+            "https://kox.nonamenebula.ru${_path}" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+          return 0
+        fi
+        if "$_curl" -fsSL -4 --max-time "$_max" -k \
+            -H "Host: kox.nonamenebula.ru" "$_ipurl" -o "$_dest" 2>/dev/null && [ -s "$_dest" ]; then
+          return 0
+        fi
+      fi
+      if [ -x /opt/bin/wget ]; then
+        if /opt/bin/wget -qO "$_dest" -4 -T "$_max" --no-check-certificate \
+            --header="Host: kox.nonamenebula.ru" "$_ipurl" 2>/dev/null && [ -s "$_dest" ]; then
+          return 0
+        fi
+      fi
+      ;;
+  esac
   return 1
 }
 
