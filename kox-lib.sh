@@ -3,6 +3,66 @@
 # Sourced by: kox-cli.sh, kox-bot.sh, kox-watchdog.sh
 
 KOX_URI_GREP='^(vless|hysteria2|hy2)://'
+KOX_RELAY_HOST="${KOX_RELAY_HOST:-kox.nonamenebula.ru}"
+
+# BusyBox: grep -c при 0 совпадениях → exit 1; «grep -c || echo 0» даёт «0\n0» и ломает [ -eq ].
+kox_count_lines() {
+  _text="$1"
+  _pat="$2"
+  _n=$(printf '%s\n' "$_text" | grep -E "$_pat" 2>/dev/null | wc -l | tr -d ' \n\r')
+  case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+  printf '%d' "$_n"
+}
+
+kox_normalize_sub_url() {
+  _url="$1"
+  case "$_url" in
+    */u/*)
+      _base=${_url%%/u/*}
+      _token=${_url#*/u/}
+      _token=${_token%%/*}
+      _token=${_token%%\?*}
+      _token=${_token%%#*}
+      if [ -n "$_base" ] && [ -n "$_token" ]; then
+        printf '%s/c/%s' "$_base" "$_token"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s' "$_url"
+}
+
+kox_is_html_payload() {
+  case "$1" in
+    *'<!DOCTYPE'*|*'<!doctype'*|*'<html'*|*'<HTML'*|*'<head'*|*'<HEAD'*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+kox_decode_subscription_body() {
+  _in="$1"
+  _out=$(printf '%s' "$_in" | base64 -d 2>/dev/null) && [ -n "$_out" ] && { printf '%s' "$_out"; return 0; }
+  _out=$(printf '%s' "$_in" | base64 -D 2>/dev/null) && [ -n "$_out" ] && { printf '%s' "$_out"; return 0; }
+  if command -v openssl >/dev/null 2>&1; then
+    _out=$(printf '%s' "$_in" | openssl base64 -d -A 2>/dev/null) && [ -n "$_out" ] && { printf '%s' "$_out"; return 0; }
+  fi
+  printf '%s' "$_in"
+}
+
+# Список серверов для меню: VLESS relay → другие VLESS → Hysteria2.
+kox_build_sub_server_list() {
+  _raw="$1"
+  _outfile="$2"
+  : > "$_outfile"
+  _relay=$(printf '%s\n' "$_raw" | grep -E '^vless://' | grep "@${KOX_RELAY_HOST}:" || true)
+  _vother=$(printf '%s\n' "$_raw" | grep -E '^vless://' | grep -v "@${KOX_RELAY_HOST}:" || true)
+  _hy2=$(printf '%s\n' "$_raw" | grep -E '^(hysteria2|hy2)://' || true)
+  if [ -n "$_relay" ]; then printf '%s\n' "$_relay" >> "$_outfile"; fi
+  if [ -n "$_vother" ]; then printf '%s\n' "$_vother" >> "$_outfile"; fi
+  if [ -n "$_hy2" ]; then printf '%s\n' "$_hy2" >> "$_outfile"; fi
+}
 
 uri_is_hy() { case "$1" in hysteria2://*|hy2://*) return 0 ;; *) return 1 ;; esac; }
 uri_proto() { uri_is_hy "$1" && printf 'hysteria2' || printf 'vless'; }
