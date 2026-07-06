@@ -2,7 +2,7 @@
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
 
-KOX_VERSION="2026.07.07.05"
+KOX_VERSION="2026.07.07.06"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -176,13 +176,11 @@ kox_patch_s24xray() {
 
 kox_install_kox_lib() {
   LIB="/opt/etc/kox-lib.sh"
-  RAW="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
   if [ -f "$LIB" ] && grep -q 'kox-lib.sh' "$LIB" 2>/dev/null; then
     chmod +x "$LIB" 2>/dev/null
     return 0
   fi
-  curl -fsSL --max-time 30 "${RAW}/kox-lib.sh" -o "$LIB" 2>/dev/null \
-    && [ -s "$LIB" ] && chmod +x "$LIB" && return 0
+  kox_fetch_repo_file "kox-lib.sh" "$LIB" 30 && [ -s "$LIB" ] && chmod +x "$LIB" && return 0
   return 1
 }
 
@@ -195,8 +193,7 @@ kox_install_maintenance_script() {
   if [ -f "$(dirname "$0")/kox-maintenance.sh" ]; then
     cp "$(dirname "$0")/kox-maintenance.sh" "$MAINT" 2>/dev/null && chmod +x "$MAINT" && return 0
   fi
-  GITHUB_RAW_MAINT="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
-  curl -fsSL --max-time 30 "${GITHUB_RAW_MAINT}/kox-maintenance.sh" -o "$MAINT" 2>/dev/null \
+  kox_fetch_repo_file "kox-maintenance.sh" "$MAINT" 30 \
     && [ -s "$MAINT" ] && chmod +x "$MAINT" && return 0
   return 1
 }
@@ -1234,7 +1231,6 @@ kox_admin() {
 
 KOX_LISTS_DIR="/opt/etc/xray/lists"
 KOX_LISTS_LOADED="/opt/etc/xray/lists/kox-lists-loaded.conf"
-GITHUB_LISTS="https://raw.githubusercontent.com/nonamenebula/kox-shield/main/lists"
 
 # Миграция: старый путь kox-lists-loaded.conf → новый внутри lists/
 _OLD_LL="/opt/etc/xray/kox-lists-loaded.conf"
@@ -1254,11 +1250,11 @@ _list_unmark_loaded() {
 }
 _list_fetch_cat() {
   mkdir -p "$KOX_LISTS_DIR"
-  curl -fsSL --max-time 15 "${GITHUB_LISTS}/${1}.txt" -o "${KOX_LISTS_DIR}/${1}.txt" 2>/dev/null
+  kox_fetch_list_rel "${1}.txt" "${KOX_LISTS_DIR}/${1}.txt"
 }
 _list_fetch_categories_json() {
   mkdir -p "$KOX_LISTS_DIR"
-  curl -fsSL --max-time 10 "${GITHUB_LISTS}/categories.json" -o "${KOX_LISTS_DIR}/categories.json" 2>/dev/null
+  kox_fetch_list_rel "categories.json" "${KOX_LISTS_DIR}/categories.json"
 }
 
 _list_add_entries() {
@@ -1475,7 +1471,7 @@ kox_list_remove() {
 kox_list_check() {
   info "Проверяю обновления списков..."
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
-  REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(kox_fetch_list_text "LISTS_VERSION" 10 2>/dev/null | tr -d '[:space:]')
   if [ -z "$REMOTE_VER" ] || ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]'; then
     fail "Не удалось получить версию списков"; return 1
   fi
@@ -1489,9 +1485,9 @@ kox_list_check() {
 }
 
 kox_list_update() {
-  info "Обновляю списки с GitHub..."
+  info "Обновляю списки (KOX CDN / GitHub)..."
   mkdir -p "$KOX_LISTS_DIR"
-  REMOTE_VER=$(curl -fsSL --max-time 10 "${GITHUB_LISTS}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
+  REMOTE_VER=$(kox_fetch_list_text "LISTS_VERSION" 10 2>/dev/null | tr -d '[:space:]')
   [ -z "$REMOTE_VER" ] && fail "Нет подключения" && return 1
   ! printf '%s' "$REMOTE_VER" | grep -qE '^[0-9]' && fail "Некорректная версия списков" && return 1
   LOCAL_VER=$(cat "${KOX_LISTS_DIR}/LISTS_VERSION" 2>/dev/null | tr -d '[:space:]')
@@ -1521,13 +1517,17 @@ kox_list_update() {
 
 kox_upgrade() {
   FORCE="${1:-}"
-  GITHUB_RAW_UP="https://raw.githubusercontent.com/nonamenebula/kox-shield/main"
   info "Проверяю обновления KOX Shield..."
 
-  REMOTE_VERSION=$(curl -fsSL --max-time 10 "${GITHUB_RAW_UP}/VERSION" 2>/dev/null | tr -d '[:space:]')
+  _ver_tmp="/tmp/kox-remote-ver.$$"
+  REMOTE_VERSION=""
+  if kox_fetch_repo_file "VERSION" "$_ver_tmp" 10; then
+    REMOTE_VERSION=$(tr -d '[:space:]' < "$_ver_tmp")
+  fi
+  rm -f "$_ver_tmp"
 
   if [ -z "$REMOTE_VERSION" ] || ! printf '%s' "$REMOTE_VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
-    fail "Не удалось получить версию с GitHub"
+    fail "Не удалось получить версию (CDN / GitHub)"
     info "Проверьте подключение к интернету"
     return 1
   fi
@@ -1543,7 +1543,12 @@ kox_upgrade() {
   warn "Доступно обновление: ${W}v${REMOTE_VERSION}${N}  (текущая: v${KOX_VERSION})"
   sep
 
-  CHANGELOG=$(curl -sSL --max-time 10 "${GITHUB_RAW_UP}/CHANGELOG.md" 2>/dev/null)
+  _cl_tmp="/tmp/kox-changelog.$$"
+  CHANGELOG=""
+  if kox_fetch_repo_file "CHANGELOG.md" "$_cl_tmp" 10; then
+    CHANGELOG=$(cat "$_cl_tmp" 2>/dev/null)
+  fi
+  rm -f "$_cl_tmp"
   if [ -n "$CHANGELOG" ]; then
     info "${W}Что нового в v${REMOTE_VERSION}:${N}"
     printf '%s\n' "$CHANGELOG" | \
@@ -1577,7 +1582,7 @@ kox_upgrade() {
   FAIL=0
 
   # kox-cli.sh → /opt/bin/kox
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-cli.sh" -o /tmp/kox-upgrade-cli 2>/dev/null \
+  if kox_fetch_repo_file "kox-cli.sh" /tmp/kox-upgrade-cli 30 \
       && [ -s /tmp/kox-upgrade-cli ]; then
     chmod +x /tmp/kox-upgrade-cli
     mv /tmp/kox-upgrade-cli /opt/bin/kox
@@ -1589,7 +1594,7 @@ kox_upgrade() {
   fi
 
   # kox-bot.sh → /opt/bin/kox-bot
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-bot.sh" -o /tmp/kox-upgrade-bot 2>/dev/null \
+  if kox_fetch_repo_file "kox-bot.sh" /tmp/kox-upgrade-bot 30 \
       && [ -s /tmp/kox-upgrade-bot ]; then
     chmod +x /tmp/kox-upgrade-bot
     mv /tmp/kox-upgrade-bot /opt/bin/kox-bot
@@ -1599,7 +1604,7 @@ kox_upgrade() {
   fi
 
   # S90kox-bot → /opt/etc/init.d/S90kox-bot
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/S90kox-bot" -o /tmp/kox-upgrade-init 2>/dev/null \
+  if kox_fetch_repo_file "S90kox-bot" /tmp/kox-upgrade-init 30 \
       && [ -s /tmp/kox-upgrade-init ]; then
     chmod +x /tmp/kox-upgrade-init
     mv /tmp/kox-upgrade-init "$BOT_INIT"
@@ -1607,7 +1612,7 @@ kox_upgrade() {
   fi
 
   # kox-watchdog.sh → /opt/etc/kox-watchdog.sh
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-watchdog.sh" -o /tmp/kox-upgrade-wd 2>/dev/null \
+  if kox_fetch_repo_file "kox-watchdog.sh" /tmp/kox-upgrade-wd 30 \
       && [ -s /tmp/kox-upgrade-wd ]; then
     chmod +x /tmp/kox-upgrade-wd
     mv /tmp/kox-upgrade-wd /opt/etc/kox-watchdog.sh
@@ -1617,7 +1622,7 @@ kox_upgrade() {
   fi
 
   # kox-lib.sh → /opt/etc/kox-lib.sh
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-lib.sh" -o /tmp/kox-upgrade-lib 2>/dev/null \
+  if kox_fetch_repo_file "kox-lib.sh" /tmp/kox-upgrade-lib 30 \
       && [ -s /tmp/kox-upgrade-lib ]; then
     chmod +x /tmp/kox-upgrade-lib
     mv /tmp/kox-upgrade-lib /opt/etc/kox-lib.sh
@@ -1627,7 +1632,7 @@ kox_upgrade() {
   fi
 
   # kox-maintenance.sh → /opt/etc/kox-maintenance.sh
-  if curl -fsSL --max-time 30 "${GITHUB_RAW_UP}/kox-maintenance.sh" -o /tmp/kox-upgrade-maint 2>/dev/null \
+  if kox_fetch_repo_file "kox-maintenance.sh" /tmp/kox-upgrade-maint 30 \
       && [ -s /tmp/kox-upgrade-maint ]; then
     chmod +x /tmp/kox-upgrade-maint
     mv /tmp/kox-upgrade-maint /opt/etc/kox-maintenance.sh
