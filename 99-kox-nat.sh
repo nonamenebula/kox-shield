@@ -1,5 +1,8 @@
 #!/bin/sh
 # KOX Shield — iptables NAT + QUIC block (Keenetic netfilter.d)
+PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
+export PATH
+
 [ "$1" = "ip6tables" ] && IPTS=ip6tables || IPTS=iptables
 
 # Не применять если пользователь вручную выключил VPN
@@ -8,7 +11,11 @@
 # Не применять если Xray не запущен — иначе весь трафик уйдёт в никуда
 pgrep xray >/dev/null 2>&1 || exit 0
 
-$IPTS -t nat -N XRAY_REDIRECT 2>/dev/null || $IPTS -t nat -F XRAY_REDIRECT
+# Полная пересборка цепочки (избегаем «пустой» XRAY_REDIRECT без REDIRECT после -F)
+$IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+$IPTS -t nat -F XRAY_REDIRECT 2>/dev/null || true
+$IPTS -t nat -X XRAY_REDIRECT 2>/dev/null || true
+$IPTS -t nat -N XRAY_REDIRECT 2>/dev/null || exit 1
 
 # Пропустить приватные IP
 for CIDR in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
@@ -18,15 +25,15 @@ for CIDR in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
 done
 
 # Перенаправить только HTTP/HTTPS — только эти порты используют VPN
-# Остальной трафик (игры, торренты, и т.д.) идёт напрямую
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
 
-# YouTube/Google используют QUIC (UDP/443). REDIRECT работает только для TCP —
-# без этого QUIC идёт напрямую и сайт не открывается. Блокируем → браузер на TCP.
+# YouTube/Google QUIC (UDP/443) → DROP на LAN, браузер переключается на TCP
 $IPTS -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
 $IPTS -t mangle -A PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
 
 # Применить к трафику LAN
-$IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
 $IPTS -t nat -A PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+
+# Проверка: без REDIRECT прозрачный VPN для WiFi не работает
+$IPTS -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808' || exit 1

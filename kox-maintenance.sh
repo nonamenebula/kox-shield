@@ -1,7 +1,10 @@
 #!/bin/sh
 # KOX Shield — ежедневное обслуживание (kox-maintenance, cron 04:05)
-# В режиме hysteria2 перезапускает и hysteria-клиент, и Xray.
-# Ротация логов — защита flash от неограниченного роста xray-acc.log.
+PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
+export PATH
+
+KOX_LIB="/opt/etc/kox-lib.sh"
+[ -f "$KOX_LIB" ] && . "$KOX_LIB"
 
 KOXCONF="/opt/etc/xray/kox.conf"
 XRAY_INIT="/opt/etc/init.d/S24xray"
@@ -15,7 +18,6 @@ LOG_DIR="/opt/var/log"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
 
-# Обрезать файл если больше max_kb (оставить хвост keep_kb)
 rotate_log() {
   _f="$1"; _max_kb="$2"; _keep_kb="${3:-$2}"
   [ -f "$_f" ] || return 0
@@ -35,7 +37,6 @@ hysteria_ok() {
 ulimit -n 65535 2>/dev/null || true
 [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
 
-# Ротация логов (до restart — меньше I/O во время работы VPN)
 rotate_log "${LOG_DIR}/xray-acc.log" 2048 512
 rotate_log "${LOG_DIR}/xray-err.log" 512 256
 rotate_log "${LOG_DIR}/hysteria.log" 512 256
@@ -65,6 +66,14 @@ if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
     [ -x "$HYSTERIA_INIT" ] && "$HYSTERIA_INIT" start >> "$LOG" 2>&1
     sleep 2
     hysteria_ok && log "hysteria recovered" || log "hysteria still down"
+  fi
+fi
+
+if pgrep xray >/dev/null 2>&1 && [ ! -f "$VPN_OFF_MARKER" ]; then
+  if type kox_apply_nat_rules >/dev/null 2>&1 && kox_apply_nat_rules; then
+    log "iptables NAT восстановлен после maintenance"
+  else
+    log "WARN: не удалось восстановить iptables NAT после maintenance"
   fi
 fi
 

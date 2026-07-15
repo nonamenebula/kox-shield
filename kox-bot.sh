@@ -3,7 +3,7 @@
 # Bot API 9.4+: colored buttons, sticky menu, clean chat
 # https://kox.nonamenebula.ru
 
-KOX_VERSION="2026.07.07.19"
+KOX_VERSION="2026.07.15.20"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="/opt/etc/kox-lib.sh"

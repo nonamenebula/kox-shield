@@ -1,5 +1,18 @@
 # CHANGELOG — KOX Shield
 
+## 2026.07.15.20
+
+### 🛠 Fix: стабильность VPN после падений (iptables + cron + failover)
+
+- **`99-kox-nat.sh`**: полная пересборка цепочки `XRAY_REDIRECT` (больше не остаётся
+  «пустой» chain без REDIRECT после `-F`); проверка REDIRECT перед exit; PATH для cron.
+- **`kox-lib.sh`**: `kox_nat_redirect_ok`, `kox_failover_enabled` (0 или ≥999 = выкл),
+  `kox_apply_nat_rules` с повторной проверкой REDIRECT.
+- **`kox-watchdog.sh` (v10)**: `wd_restore_nat()` после каждого рестарта Xray;
+  switch-auto уважает `KOX_FAILOVER_MINUTES`; дефолт failover **10 мин**; PATH для cron.
+- **`kox-maintenance.sh`**: PATH + восстановление iptables после ночного рестарта.
+- **`kox restart`**: после рестарта восстанавливает NAT, если VPN включён.
+
 ## 2026.07.07.19
 
 ### 🛠 Fix + UX: Telegram-бот v19

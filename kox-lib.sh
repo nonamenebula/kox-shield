@@ -158,13 +158,40 @@ kox_install_nat_script() {
   return 1
 }
 
-# Применить NAT + QUIC-блок (IPv4 и IPv6).
+# Есть ли REDIRECT на 10808 в XRAY_REDIRECT (иначе WiFi-клиенты без VPN).
+kox_nat_redirect_ok() {
+  iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808'
+}
+
+# switch-auto включён? (0 или >=999 = выкл)
+kox_failover_enabled() {
+  _fm="${1:-}"
+  if [ -z "$_fm" ] && [ -f /opt/etc/xray/kox.conf ]; then
+    # shellcheck disable=SC1091
+    . /opt/etc/xray/kox.conf 2>/dev/null
+    _fm="${KOX_FAILOVER_MINUTES:-10}"
+  fi
+  _fm="${_fm:-10}"
+  case "$_fm" in
+    0|off|OFF|disabled|DISABLED) return 1 ;;
+  esac
+  [ "$_fm" -ge 999 ] 2>/dev/null && return 1
+  return 0
+}
+
+# Применить NAT + QUIC-блок (IPv4 и IPv6), с проверкой REDIRECT.
 kox_apply_nat_rules() {
   _nat="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
   [ -f "$_nat" ] || return 1
-  sh "$_nat" 2>/dev/null || return 1
-  sh "$_nat" ip6tables 2>/dev/null || true
-  return 0
+  _try=0
+  while [ "$_try" -lt 3 ]; do
+    sh "$_nat" 2>/dev/null || return 1
+    sh "$_nat" ip6tables 2>/dev/null || true
+    kox_nat_redirect_ok && return 0
+    _try=$((_try + 1))
+    sleep 1
+  done
+  return 1
 }
 
 # Снять NAT Xray + QUIC-блок (при падении Xray / kox off).
