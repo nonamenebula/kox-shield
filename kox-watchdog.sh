@@ -1,7 +1,9 @@
 #!/bin/sh
-# KOX Watchdog v9
-# — перезапускает xray при падении; при сбое — switch-auto на другой сервер
-# — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 3)
+# KOX Watchdog v10
+# — перезапускает xray при падении; при сбое — switch-auto (если включён)
+# — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 10; 0 или >=999 = выкл)
+PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
+export PATH
 # — после падения Xray — переключение без ожидания N минут
 # — switch-auto использует кэш серверов если подписка недоступна
 # — возврат на основной сервер (KOX_PREFERRED_HOST + KOX_AUTO_RETURN)
@@ -36,6 +38,19 @@ PROXY_TAG="kox-proxy"
 [ -f "$SWITCHING_LOCK" ] && exit 0
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOGF"; }
+
+wd_restore_nat() {
+  if type kox_apply_nat_rules >/dev/null 2>&1; then
+    if kox_apply_nat_rules; then
+      return 0
+    fi
+    log "WARN: kox_apply_nat_rules не восстановил REDIRECT"
+    return 1
+  fi
+  sh "$NAT_SCRIPT" 2>/dev/null
+  sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+  iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808'
+}
 
 kox_xray_ulimit() { ulimit -n 65535 2>/dev/null || true; }
 
@@ -116,7 +131,7 @@ wd_proxy_set_vless() {
 # Загрузить конфиг
 [ -f "$KOXCONF" ] && . "$KOXCONF" 2>/dev/null
 
-FAILOVER_MINUTES="${KOX_FAILOVER_MINUTES:-3}"
+FAILOVER_MINUTES="${KOX_FAILOVER_MINUTES:-10}"
 AUTO_RETURN="${KOX_AUTO_RETURN:-yes}"
 PREF_HOST="${KOX_PREFERRED_HOST:-}"
 PREF_PORT="${KOX_PREFERRED_PORT:-443}"
@@ -149,6 +164,11 @@ kox_watchdog_switch_auto() {
   local REASON="${1:-сбой VPN}"
   local CURRENT_HOST NEW_SERVER SWITCH_RC NOW LAST ELAPSED
 
+  if ! kox_failover_enabled "$FAILOVER_MINUTES" 2>/dev/null; then
+    log "switch-auto пропущен — выключен (KOX_FAILOVER_MINUTES=${FAILOVER_MINUTES})"
+    return 1
+  fi
+
   CURRENT_HOST="${KOX_SERVER:-}"
   [ -z "$CURRENT_HOST" ] && CURRENT_HOST=$(grep -m1 '"address"' "$CONF" 2>/dev/null | sed 's/.*"address": *"\([^"]*\)".*/\1/')
   NOW=$(cat /proc/uptime 2>/dev/null | cut -d. -f1)
@@ -176,8 +196,7 @@ kox_watchdog_switch_auto() {
     printf '0\n' > "$FAIL_COUNT_FILE"
     printf '0\n' > "$XRAY_START_FAIL_FILE"
     rm -f "$XRAY_WAS_DOWN"
-    sh "$NAT_SCRIPT" 2>/dev/null
-    sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+    wd_restore_nat
     log "switch-auto успешно: $NEW_SERVER"
     RETURN_NOTE=""
     [ "$AUTO_RETURN" = "yes" ] && [ -n "$PREF_HOST" ] && \
@@ -239,9 +258,8 @@ if ! pgrep xray >/dev/null 2>&1; then
     kox_xray_start
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
-      sh "$NAT_SCRIPT" 2>/dev/null
-      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
-      log "Xray перезапущен, iptables восстановлен"
+      wd_restore_nat && log "Xray перезапущен, iptables восстановлен" || \
+        log "Xray перезапущен, но iptables REDIRECT не восстановлен"
       if ! kox_tunnel_ok; then
         log "Xray запущен, но туннель не отвечает — пробую switch-auto"
         kox_watchdog_switch_auto "Xray поднялся, туннель мёртв" || true
@@ -293,8 +311,7 @@ if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! kox_hysteria_ok; then
       log "Hysteria OK, туннель нет — перезапуск Xray"
       kox_xray_restart
       sleep 3
-      sh "$NAT_SCRIPT" 2>/dev/null
-      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+      wd_restore_nat
     fi
   else
     log "Hysteria2 не удалось запустить — switch-auto"
@@ -309,8 +326,7 @@ if ! netstat -ln 2>/dev/null | grep -q ':10808 '; then
   kox_xray_restart
   sleep 5
   if pgrep xray >/dev/null 2>&1 && netstat -ln 2>/dev/null | grep -q ':10808 '; then
-    sh "$NAT_SCRIPT" 2>/dev/null
-    sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+    wd_restore_nat
     log "Xray перезапущен после сбоя порта 10808"
     if ! kox_tunnel_ok; then
       log "Порт 10808 OK, туннель нет — switch-auto"
@@ -335,8 +351,7 @@ if pgrep xray >/dev/null 2>&1 && \
 Перезапускаю Xray..."
   kox_xray_restart
   sleep 5
-  sh "$NAT_SCRIPT" 2>/dev/null
-  sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+  wd_restore_nat
   if kox_acc_log_stale; then
     log "После перезапуска access-лог всё ещё молчит — switch-auto"
     kox_watchdog_switch_auto "Xray завис (access-лог)" || true
@@ -347,11 +362,16 @@ if pgrep xray >/dev/null 2>&1 && \
   fi
 fi
 
-# ── 3. Восстановить iptables если пропали ────────────────────────────
-if ! iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q REDIRECT; then
-  log "iptables правила пропали — восстанавливаю"
-  sh "$NAT_SCRIPT" 2>/dev/null
-  sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+# ── 3. Восстановить iptables если пропали REDIRECT ───────────────────
+_needs_nat=0
+if type kox_nat_redirect_ok >/dev/null 2>&1; then
+  kox_nat_redirect_ok || _needs_nat=1
+else
+  iptables -t nat -L XRAY_REDIRECT 2>/dev/null | grep -q 'redir ports 10808' || _needs_nat=1
+fi
+if [ "$_needs_nat" = "1" ] && [ ! -f "$VPN_OFF_MARKER" ] && pgrep xray >/dev/null 2>&1; then
+  log "iptables REDIRECT пропали — восстанавливаю"
+  wd_restore_nat || log "WARN: восстановление iptables не удалось"
 fi
 
 # ── 4. Получить текущий сервер ────────────────────────────────────────
@@ -491,12 +511,16 @@ else
   printf '%s\n' "$COUNT" > "$FAIL_COUNT_FILE"
   log "VPN-туннель не отвечает — счётчик ${COUNT}/${FAILOVER_MINUTES} (быстрый=${FAST_SWITCH})"
 
-  if [ "$FAST_SWITCH" = "1" ] || [ "$COUNT" -ge "$FAILOVER_MINUTES" ]; then
-    if [ "$FAST_SWITCH" = "1" ]; then
-      kox_watchdog_switch_auto "туннель упал после перезапуска Xray"
-    else
-      kox_watchdog_switch_auto "${FAILOVER_MINUTES} мин без VPN"
+  if kox_failover_enabled "$FAILOVER_MINUTES" 2>/dev/null; then
+    if [ "$FAST_SWITCH" = "1" ] || [ "$COUNT" -ge "$FAILOVER_MINUTES" ]; then
+      if [ "$FAST_SWITCH" = "1" ]; then
+        kox_watchdog_switch_auto "туннель упал после перезапуска Xray"
+      else
+        kox_watchdog_switch_auto "${FAILOVER_MINUTES} мин без VPN"
+      fi
     fi
+  elif [ "$COUNT" -ge 3 ]; then
+    log "switch-auto выключен — туннель не отвечает ${COUNT} мин (проверьте kox status)"
   fi
 fi
 
@@ -516,8 +540,7 @@ if [ -n "$XPID" ] && [ -d "/proc/$XPID/fd" ]; then
     kox_xray_restart
     sleep 5
     if pgrep xray >/dev/null 2>&1; then
-      sh "$NAT_SCRIPT" 2>/dev/null
-      sh "$NAT_SCRIPT" ip6tables 2>/dev/null || true
+      wd_restore_nat
       log "Профилактический перезапуск Xray выполнен (fd было ${FD_COUNT})"
     else
       log "Профилактический перезапуск не удался"

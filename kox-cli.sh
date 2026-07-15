@@ -1,8 +1,10 @@
 #!/bin/sh
 # KOX Shield Management Console
 # https://kox.nonamenebula.ru | t.me/PrivateProxyKox
+PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
+export PATH
 
-KOX_VERSION="2026.07.07.19"
+KOX_VERSION="2026.07.15.20"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -336,8 +338,8 @@ kox_upgrade_post() {
     ok "Cron: ежедневное обслуживание в 04:05 (hysteria + xray)" || \
     warn "Не удалось добавить cron kox-maintenance"
   if [ -f "$KOXCONF" ] && ! grep -q '^KOX_FAILOVER_MINUTES=' "$KOXCONF" 2>/dev/null; then
-    printf 'KOX_FAILOVER_MINUTES="3"\n' >> "$KOXCONF"
-    ok "KOX_FAILOVER_MINUTES=3 (быстрое авто-переключение при сбое VPN)"
+    printf 'KOX_FAILOVER_MINUTES="10"\n' >> "$KOXCONF"
+    ok "KOX_FAILOVER_MINUTES=10 (авто-переключение при сбое VPN; 0 или 999 = выкл)"
   fi
   kox_install_hysteria 2>/dev/null || true
 }
@@ -568,6 +570,10 @@ kox_restart() {
   fi
   if pgrep xray >/dev/null 2>&1; then
     ok "Xray перезапущен успешно"
+    if [ ! -f /tmp/kox-vpn-off ] && type kox_apply_nat_rules >/dev/null 2>&1; then
+      kox_apply_nat_rules 2>/dev/null && ok "iptables NAT восстановлен" || \
+        warn "iptables REDIRECT не восстановлен — выполните: kox fix-nat"
+    fi
   else
     fail "Xray не запустился, проверьте: kox log"
   fi
