@@ -1,5 +1,5 @@
 #!/bin/sh
-# KOX Watchdog v10
+# KOX Watchdog v11
 # — перезапускает xray при падении; при сбое — switch-auto (если включён)
 # — считает минуты без VPN (KOX_FAILOVER_MINUTES, default 10; 0 или >=999 = выкл)
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
@@ -136,7 +136,10 @@ AUTO_RETURN="${KOX_AUTO_RETURN:-yes}"
 PREF_HOST="${KOX_PREFERRED_HOST:-}"
 PREF_PORT="${KOX_PREFERRED_PORT:-443}"
 PREF_REMARK="${KOX_PREFERRED_REMARK:-основной сервер}"
-FD_WARN="${KOX_FD_WARN:-800}"
+# 800 было актуально при лимите 1024. С ulimit 65535 это ложные рестарты.
+FD_WARN="${KOX_FD_WARN:-}"
+FD_RESTART_COOLDOWN="${KOX_FD_RESTART_COOLDOWN:-10800}"
+FD_RESTART_TS_FILE="/tmp/kox-fd-restart-ts"
 ACC_STALE_MINUTES="${KOX_ACC_STALE_MINUTES:-5}"
 
 kox_acc_log_stale() {
@@ -525,25 +528,69 @@ else
 fi
 
 # ── 7. Профилактика: слишком много открытых файловых дескрипторов ─────
+# 800–1500 fd на домашнем роутере — норма (YouTube/Telegram через прозрачный прокси).
+# Рестарт нужен только если лимит всё ещё ~1024 или fd растут к реальному ulimit.
 XPID=$(pgrep xray 2>/dev/null | head -1)
 if [ -n "$XPID" ] && [ -d "/proc/$XPID/fd" ]; then
   FD_COUNT=$(ls "/proc/$XPID/fd" 2>/dev/null | wc -l | tr -d ' ')
   case "$FD_COUNT" in
     ''|*[!0-9]*) FD_COUNT=0 ;;
   esac
-  if [ "$FD_COUNT" -ge "$FD_WARN" ] 2>/dev/null; then
-    log "Xray: ${FD_COUNT} открытых fd (порог ${FD_WARN}) — профилактический перезапуск"
-    tg_notify "⚠️ <b>KOX Shield — профилактический перезапуск Xray</b>
-
-Открыто файловых дескрипторов: <b>${FD_COUNT}</b> (порог ${FD_WARN}).
-Перезапускаю Xray, чтобы избежать падения VPN."
-    kox_xray_restart
-    sleep 5
-    if pgrep xray >/dev/null 2>&1; then
-      wd_restore_nat
-      log "Профилактический перезапуск Xray выполнен (fd было ${FD_COUNT})"
+  FD_LIMIT=$(awk '/Max open files/{print $4; exit}' "/proc/$XPID/limits" 2>/dev/null)
+  case "$FD_LIMIT" in
+    ''|*[!0-9]*) FD_LIMIT=0 ;;
+  esac
+  if [ -z "$FD_WARN" ]; then
+    if [ "$FD_LIMIT" -gt 0 ] && [ "$FD_LIMIT" -le 2048 ]; then
+      FD_WARN=800
     else
-      log "Профилактический перезапуск не удался"
+      FD_WARN=8000
+    fi
+  fi
+  FD_CRIT=0
+  if [ "$FD_LIMIT" -gt 2048 ]; then
+    FD_CRIT=$((FD_LIMIT * 80 / 100))
+  fi
+  if [ "$FD_COUNT" -ge "$FD_WARN" ] 2>/dev/null; then
+    NOW_TS=$(date +%s 2>/dev/null || echo 0)
+    LAST_TS=$(cat "$FD_RESTART_TS_FILE" 2>/dev/null || echo 0)
+    case "$LAST_TS" in
+      ''|*[!0-9]*) LAST_TS=0 ;;
+    esac
+    AGE_TS=0
+    [ "$NOW_TS" -gt 0 ] && [ "$LAST_TS" -gt 0 ] && AGE_TS=$((NOW_TS - LAST_TS))
+    DO_RESTART=1
+    if [ "$LAST_TS" -gt 0 ] && [ "$AGE_TS" -lt "$FD_RESTART_COOLDOWN" ]; then
+      if [ "$FD_CRIT" -eq 0 ] || [ "$FD_COUNT" -lt "$FD_CRIT" ]; then
+        DO_RESTART=0
+        log "Xray: ${FD_COUNT} fd (порог ${FD_WARN}, лимит ${FD_LIMIT}) — пропуск, cooldown ${AGE_TS}s"
+      fi
+    fi
+    if [ "$DO_RESTART" = "1" ]; then
+      log "Xray: ${FD_COUNT} открытых fd (порог ${FD_WARN}, лимит ${FD_LIMIT}) — профилактический перезапуск"
+      # В Telegram только если реально близко к падению (лимит 1024 или >80% ulimit)
+      FD_NOTIFY=0
+      if [ "$FD_LIMIT" -gt 0 ] && [ "$FD_LIMIT" -le 2048 ]; then
+        FD_NOTIFY=1
+      fi
+      if [ "$FD_CRIT" -gt 0 ] && [ "$FD_COUNT" -ge "$FD_CRIT" ]; then
+        FD_NOTIFY=1
+      fi
+      if [ "$FD_NOTIFY" = "1" ]; then
+        tg_notify "⚠️ <b>KOX Shield — профилактический перезапуск Xray</b>
+
+Открыто файловых дескрипторов: <b>${FD_COUNT}</b> из ${FD_LIMIT}.
+Перезапускаю Xray, чтобы избежать падения VPN."
+      fi
+      printf '%s\n' "$NOW_TS" > "$FD_RESTART_TS_FILE"
+      kox_xray_restart
+      sleep 5
+      if pgrep xray >/dev/null 2>&1; then
+        wd_restore_nat
+        log "Профилактический перезапуск Xray выполнен (fd было ${FD_COUNT})"
+      else
+        log "Профилактический перезапуск не удался"
+      fi
     fi
   fi
 fi
