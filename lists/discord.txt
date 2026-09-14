@@ -1,4 +1,5 @@
-# KOX Shield — Discord
+# KOX Shield — Discord (мессенджер + голосовые каналы)
+# Голос идёт UDP (TPROXY 10810); TCP 443 — домены ниже
 
 # domains
 discord.com
@@ -7,5 +8,13 @@ discordapp.com
 discordapp.net
 discord.media
 discordcdn.com
+discord.co
+discord.gift
+discordstatus.com
 dis.gd
 gateway.discord.gg
+cdn.discordapp.com
+media.discordapp.net
+dl.discordapp.net
+images-ext-1.discordapp.net
+images-ext-2.discordapp.net

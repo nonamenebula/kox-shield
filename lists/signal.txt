@@ -4,3 +4,5 @@
 signal.org
 whispersystems.org
 signal.group
+signal.tube
+storage.signal.org

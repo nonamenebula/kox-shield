@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.07.15.20"
+KOX_VERSION="2026.09.14.22"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -51,12 +51,31 @@ kox_xray_start() {
 # Write hysteria client.yaml — kox_hysteria_write_conf() in kox-lib.sh
 
 kox_hysteria_start() {
-  if [ -x "$HYSTERIA_INIT" ]; then
-    "$HYSTERIA_INIT" restart >/dev/null 2>&1
-  else
-    killall hysteria 2>/dev/null; sleep 1
-    "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 &
-  fi
+  type kox_hysteria_ensure_wan_bind >/dev/null 2>&1 && kox_hysteria_ensure_wan_bind "$HYSTERIA_CONF"
+  _try=0
+  while [ "$_try" -lt 3 ]; do
+    if [ -x "$HYSTERIA_INIT" ]; then
+      "$HYSTERIA_INIT" restart >/dev/null 2>&1
+    else
+      killall hysteria 2>/dev/null; sleep 1
+      "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 &
+    fi
+    _w=0
+    while [ "$_w" -lt 8 ]; do
+      if type kox_hysteria_alive >/dev/null 2>&1 && kox_hysteria_alive "$HYSTERIA_SOCKS_PORT"; then
+        return 0
+      fi
+      # FATAL выходит сразу — не ждать пустой порт
+      if [ "$_w" -ge 2 ] && ! pgrep -f hysteria >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+      _w=$((_w + 1))
+    done
+    _try=$((_try + 1))
+    sleep 1
+  done
+  return 1
 }
 
 kox_hysteria_stop() {
@@ -152,6 +171,8 @@ kox_apply_server_uri() {
     _kox_conf_set KOX_SNI  "${SNI:-www.google.com}"
     _kox_conf_set KOX_FLOW "$FLOW"
   fi
+  kox_bypass_ips_sync_auto 2>/dev/null || true
+  kox_sync_bypass_routing "$CONF" 2>/dev/null || true
 }
 
 kox_patch_s24xray() {
@@ -303,6 +324,10 @@ hy_start() {
   [ "${KOX_PROTO:-vless}" = "hysteria2" ] || { echo "hysteria: KOX_PROTO!=hysteria2 — пропуск"; return 0; }
   [ -x "$BIN" ]   || { echo "hysteria: бинарник отсутствует"; return 1; }
   [ -f "$HCONF" ] || { echo "hysteria: нет client.yaml"; return 1; }
+  if ! grep -q 'bindInterface:' "$HCONF" 2>/dev/null; then
+    _wan=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    [ -n "$_wan" ] && printf '\nquic:\n  sockopts:\n    bindInterface: %s\n' "$_wan" >> "$HCONF"
+  fi
   killall hysteria 2>/dev/null; sleep 1
   ulimit -n 65535 2>/dev/null || true
   "$BIN" client -c "$HCONF" >> "$LOG" 2>&1 &
@@ -371,7 +396,7 @@ kox_help() {
   printf "  ${G}kox status${N}           — статус Xray и туннеля\n"
   printf "  ${G}kox on${N}               — включить VPN (iptables)\n"
   printf "  ${G}kox off${N}              — выключить VPN (iptables)\n"
-  printf "  ${G}kox fix-nat${N}          — обновить NAT + QUIC-блок (YouTube)\n"
+  printf "  ${G}kox fix-nat${N}          — обновить NAT + QUIC + UDP (звонки/игры)\n"
   printf "  ${G}kox restart${N}          — перезапустить VPN (Xray + Hysteria2)\n"
   printf "  ${G}kox test${N}             — проверить конфиг Xray\n"
   printf "  ${G}kox server${N}           — инфо о текущем сервере (VLESS/HY2)\n"
@@ -383,6 +408,11 @@ kox_help() {
   printf "  ${G}kox add-ip <CIDR>${N}    — добавить IP/подсеть в туннель\n"
   printf "  ${G}kox del-ip <CIDR>${N}    — удалить IP/подсеть\n"
   printf "  ${G}kox list-ip${N}          — все IP/подсети\n\n"
+  printf "  ${G}kox bypass add <IP>${N}  — не перехватывать IP (SSTP-сервер)\n"
+  printf "  ${G}kox bypass del <IP>${N}  — убрать IP из обхода\n"
+  printf "  ${G}kox bypass list${N}       — список IP без перехвата\n"
+  printf "  ${G}kox bypass lan add <IP>${N} — весь ПК без KOX (SSTP ok, Telegram нет)\n"
+  printf "  ${G}kox bypass lan del <IP>${N} — убрать LAN-обход\n\n"
   printf "  ${G}kox log${N}              — последние ошибки Xray\n"
   printf "  ${G}kox log-live${N}         — логи в реальном времени\n"
   printf "  ${G}kox clear-log${N}        — очистить логи\n"
@@ -448,6 +478,16 @@ kox_status() {
   elif [ ! -f /tmp/kox-vpn-off ]; then
     warn "QUIC-блок не активен — выполните: ${W}kox fix-nat${N}"
   fi
+  if type kox_udp_tproxy_active >/dev/null 2>&1 && kox_udp_tproxy_active; then
+    ok "UDP TPROXY (10810): активен — звонки и игры через туннель"
+  elif [ ! -f /tmp/kox-vpn-off ]; then
+    warn "UDP TPROXY не активен — звонки/игры идут мимо VPN (kox fix-nat)"
+  fi
+  if iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'dpt:9339'; then
+    ok "Clash Royale / Supercell: TCP 9339 в туннеле"
+  elif [ ! -f /tmp/kox-vpn-off ]; then
+    warn "TCP 9339 не перехватывается — Clash Royale может не зайти (kox fix-nat)"
+  fi
 
   # VPN on/off marker
   if [ -f /tmp/kox-vpn-off ]; then
@@ -496,6 +536,7 @@ kox_status() {
 kox_on() {
   info "Включаю VPN..."
   rm -f /tmp/kox-vpn-off
+  kox_bypass_ips_sync_auto 2>/dev/null || true
   if kox_apply_nat_rules; then
     ok "iptables правила применены — VPN включен"
   else
@@ -510,7 +551,7 @@ kox_on() {
 }
 
 kox_fix_nat() {
-  info "Обновляю NAT-скрипт (QUIC-блок для YouTube)..."
+  info "Обновляю NAT-скрипт (QUIC + UDP TPROXY)..."
   if kox_install_nat_script; then
     ok "99-kox-nat.sh установлен"
   else
@@ -518,11 +559,18 @@ kox_fix_nat() {
     return 1
   fi
   if kox_apply_nat_rules; then
+    kox_bypass_ips_sync_auto 2>/dev/null || true
+    kox_sync_bypass_routing "$CONF" 2>/dev/null || true
     if kox_quic_block_active; then
       ok "QUIC-блок активен — YouTube должен открываться через TCP"
     else
       warn "Правила применены, но QUIC-блок не обнаружен"
       info "Проверьте: iptables -t mangle -L PREROUTING -n -v | grep 443"
+    fi
+    if type kox_udp_tproxy_active >/dev/null 2>&1 && kox_udp_tproxy_active; then
+      ok "UDP TPROXY активен — звонки и игры через туннель"
+    else
+      warn "UDP TPROXY не активен (нет xt_TPROXY или Xray ещё не слушает 10810)"
     fi
   else
     fail "Ошибка применения NAT-правил"
@@ -539,23 +587,36 @@ kox_off() {
     iptables -t nat -F XRAY_REDIRECT 2>/dev/null || true
     iptables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
     iptables -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i br0 -j KOX_QUIC 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i br0 -j KOX_UDP 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i br0 -p udp -m socket -j KOX_DIVERT 2>/dev/null || true
     iptables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+    ip rule del fwmark 0x2c0c lookup 252 2>/dev/null || true
+    ip route flush table 252 2>/dev/null || true
     iptables -t nat -X XRAY_REDIRECT 2>/dev/null || true
     ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
     ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
     ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
     ip6tables -t nat -X XRAY_REDIRECT 2>/dev/null || true
   fi
-  ok "VPN выключен. Xray продолжает работать, трафик не перенаправляется."
+  ok "VPN выключен: перехват трафика снят, Xray продолжает работать."
+  info "Полная остановка Xray: ${W}kox restart${N} или ${W}/opt/etc/init.d/S24xray stop${N}"
   info "Для включения: ${W}kox on${N}"
 }
 
 kox_restart() {
   load_conf
+  _hy_ok=1
   # В hysteria-режиме поднимаем/перезапускаем hysteria-клиент (xray остаётся фронтом)
   if [ "${KOX_PROTO:-vless}" = "hysteria2" ]; then
     info "Перезапускаю Hysteria2-клиент..."
-    kox_hysteria_start
+    if kox_hysteria_start; then
+      ok "Hysteria2 подключена (socks 127.0.0.1:${HYSTERIA_SOCKS_PORT})"
+    else
+      _hy_ok=0
+      fail "Hysteria2 не поднялась — туннель мёртв, NAT не вешаю (иначе сайты зависнут)"
+      warn "Смотрите: tail /opt/var/log/hysteria.log"
+    fi
   else
     kox_hysteria_stop 2>/dev/null || true
   fi
@@ -564,12 +625,16 @@ kox_restart() {
   kox_xray_ulimit
   "$XRAY_INIT" restart
   sleep 2
-  if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && ! pgrep -f hysteria >/dev/null 2>&1; then
-    kox_hysteria_start
-    sleep 1
+  if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && [ "$_hy_ok" = "0" ]; then
+    info "Повторный запуск Hysteria2..."
+    kox_hysteria_start && _hy_ok=1 && ok "Hysteria2 поднялась со второй попытки"
   fi
   if pgrep xray >/dev/null 2>&1; then
     ok "Xray перезапущен успешно"
+    if [ "${KOX_PROTO:-vless}" = "hysteria2" ] && [ "$_hy_ok" = "0" ]; then
+      warn "Xray есть, Hysteria нет — интернет напрямую, VPN после восстановления туннеля"
+      return 1
+    fi
     if [ ! -f /tmp/kox-vpn-off ] && type kox_apply_nat_rules >/dev/null 2>&1; then
       kox_apply_nat_rules 2>/dev/null && ok "iptables NAT восстановлен" || \
         warn "iptables REDIRECT не восстановлен — выполните: kox fix-nat"
@@ -723,11 +788,38 @@ kox_list_ips() {
   info "${W}IP/подсети в туннеле:${N}"
   sep
   grep -E '"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+"' "$CONF" 2>/dev/null | \
-    grep -v '192\.0\.2\.255' | \
+    grep -v '192\.0\.2\.255' | grep -v '192\.0\.2\.254' | \
     sed 's/.*"\([0-9./]*\)".*/  \1/'
   grep -E '"[0-9a-f:]+/[0-9]+"' "$CONF" 2>/dev/null | \
     sed 's/.*"\([0-9a-f:./]*\)".*/  \1/'
   sep
+}
+
+kox_bypass_list() {
+  info "${W}VPN-серверы без перехвата (LAN-клиенты Happ/HY2):${N}"
+  sep
+  kox_bypass_ips_collect 2>/dev/null | sort -u | while read -r _ip; do
+    [ -n "$_ip" ] && printf '  %s\n' "$_ip"
+  done
+  sep
+  if [ -f "$KOX_BYPASS_IPS_FILE" ]; then
+    _n=$(grep -vc '^#' "$KOX_BYPASS_IPS_FILE" 2>/dev/null || echo 0)
+    info "Своих IP в ${W}${KOX_BYPASS_IPS_FILE}${N}: ${_n}"
+  fi
+}
+
+kox_bypass_add() {
+  local IP="${1:-}"
+  [ -z "$IP" ] && fail "Укажите IP: kox bypass add 1.2.3.4" && return 1
+  kox_validate_ip_cidr "$IP" || { fail "Некорректный IP: ${IP}"; return 1; }
+  kox_bypass_ip_add "$IP" && ok "Добавлен обход: ${W}${IP%%/*}${N}" || fail "Не удалось добавить"
+  info "iptables и routing обновлены — попробуйте VPN на LAN-клиенте"
+}
+
+kox_bypass_del() {
+  local IP="${1:-}"
+  [ -z "$IP" ] && fail "Укажите IP: kox bypass del 1.2.3.4" && return 1
+  kox_bypass_ip_del "$IP" && ok "Удалён из обхода: ${W}${IP%%/*}${N}" || fail "Не удалось удалить"
 }
 
 kox_log() {
@@ -858,6 +950,14 @@ kox_update_sub() {
 
   # Применяем (vless или hysteria2) единой логикой — обновляет config.json + kox.conf
   kox_apply_server_uri "$SRV_LINE"
+  _idx=0
+  printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | while read -r _u; do
+    _idx=$((_idx + 1))
+    _h=$(uri_host "$_u")
+    _p=$(uri_port "$_u"); [ -z "$_p" ] && _p=443
+    printf '%s\t%s\t%s\t\t\t%s\n' "$_idx" "$_h" "$_p" "$_u"
+  done > /tmp/kox-cli-servers.txt 2>/dev/null || true
+  kox_bypass_refresh no-reload 2>/dev/null || true
   ok "config.json и kox.conf обновлены (${NEW_PROTO})"
 
   kox_restart
@@ -2120,6 +2220,7 @@ kox_switch() {
   done
 
   if [ "$TUNNEL_OK" = "1" ]; then
+    kox_bypass_refresh no-reload 2>/dev/null || true
     ok "VPN-туннель работает (HTTP $HTTP_CODE)"
     sep
     ok "${W}Переключено на: ${REMARK}${N}"
@@ -2288,6 +2389,25 @@ case "$CMD" in
   add-ip)        kox_add_ip "$@" ;;
   del-ip)        kox_del_ip "$@" ;;
   list-ip)       kox_list_ips ;;
+  bypass)
+    BYCMD="${1:-}"; BYIP="${2:-}"
+    case "$BYCMD" in
+      add)  kox_bypass_add "$BYIP" ;;
+      del)  kox_bypass_del "$BYIP" ;;
+      list|"") kox_bypass_list ;;
+      lan)
+        LANCMD="${2:-}"; LANIP="${3:-}"
+        case "$LANCMD" in
+          add)  kox_validate_ip_cidr "$LANIP" 2>/dev/null || { fail "IP: kox bypass lan add 192.168.1.x"; exit 1; }
+                kox_bypass_lan_add "$LANIP" && ok "LAN без KOX: ${W}${LANIP}${N}" || fail "Ошибка" ;;
+          del)  kox_bypass_lan_del "$LANIP" && ok "Убран LAN-обход: ${W}${LANIP}${N}" ;;
+          list) [ -f "$KOX_BYPASS_LAN_FILE" ] && cat "$KOX_BYPASS_LAN_FILE" || info "Список пуст" ;;
+          *) fail "Использование: kox bypass lan add|del|list [IP]" ;;
+        esac
+        ;;
+      *) fail "Использование: kox bypass add|del|list [IP] | kox bypass lan add|del|list [IP]" ;;
+    esac
+    ;;
   log)           kox_log ;;
   log-live)      kox_log_live ;;
   clear-log)     kox_clear_log ;;

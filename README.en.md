@@ -44,7 +44,7 @@
 | 🔄 **Auto-update** | Daily subscription parameter refresh |
 | 🏠 **Whole network** | Works on all devices once the router is set up |
 
-> 🧩 **How it works:** Xray is always the transparent front-end (iptables intercepts only ports 80/443). For a VLESS server the outbound is native VLESS/Reality; for a Hysteria2 server a local `hysteria` client (SOCKS5 on `127.0.0.1`) is started and Xray routes traffic into it. Switching between protocols is fully automatic — routing rules and domain lists stay unchanged.
+> 🧩 **How it works:** Xray is always the transparent front-end (iptables intercepts TCP 80/443, plus IPv4 UDP for calls/games via TPROXY). For a VLESS server the outbound is native VLESS/Reality; for a Hysteria2 server a local `hysteria` client (SOCKS5 on `127.0.0.1`) is started and Xray routes traffic into it. Switching between protocols is fully automatic — routing rules and domain lists stay unchanged.
 
 ---
 
@@ -321,7 +321,9 @@ KOX_SUB_URL="https://kox.nonamenebula.ru/c/YOUR_TOKEN"
 **Key KOX Shield behavior:** if VPN stops working — internet does not go down.
 
 How it works:
-1. **iptables** intercepts only **ports 80 and 443** (HTTP/HTTPS) — not all TCP
+1. **iptables** intercepts **TCP 80/443** (HTTP/HTTPS) and separately **IPv4 UDP**
+   for calls/games (TPROXY → 10810). UDP/443 (QUIC) is still dropped so YouTube
+   falls back to TCP through the tunnel — not all TCP and not all UDP/443
 2. **Watchdog** runs **every minute** and checks:
    - Xray process and port 10808
    - In Hysteria2 mode — `hysteria` client and SOCKS `127.0.0.1:11888`

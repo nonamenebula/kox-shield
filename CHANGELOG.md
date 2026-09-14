@@ -1,5 +1,39 @@
 # CHANGELOG — KOX Shield
 
+## 2026.09.14.22
+
+### ✨ Списки игр и звонков + Clash Royale (TCP 9339)
+
+- **`lists/supercell.txt`**: игровые хосты Clash Royale / CoC / Brawl Stars / Hay Day
+  (`game.clashroyaleapp.com`, `brawlstarsgame.com`, assets) + AS212916 IPv6.
+- **Discord / Steam / Telegram / WhatsApp / Signal** — дополнены CDN и клиентские домены.
+- iptables **REDIRECT TCP 9339** (и `5.180.72.0/22`) — иначе Clash Royale не попадал
+  в Xray: перехватывались только 80/443.
+- Telegram DC CIDR — все TCP-порты, не только 443.
+- Списки **v20260914001** (GitHub `lists/` + CDN).
+
+### ✨ UDP TPROXY для звонков и игр (без поломки TCP)
+
+- Отдельный вход Xray `kox-tproxy-udp` на **10810** (`network: udp` + `tproxy`).
+  TCP 80/443 по-прежнему **REDIRECT → 10808** без `sockopt.tproxy` — тот вариант
+  ронял интернет на ноутбуках.
+- iptables **TPROXY только IPv4 UDP с br0**, кроме RFC1918, DNS/DHCP/NTP/mDNS,
+  UDP/443 (QUIC по-прежнему DROP) и IP из `bypass-ips`.
+- Перехваченный UDP идёт в `kox-proxy`, а не в catch-all `network:udp → direct`
+  (иначе игры «зацикливаются» на роутере).
+- Если нет модуля `xt_TPROXY` или Xray не слушает 10810 — TCP/YouTube как раньше.
+
+## 2026.07.17.21
+
+### 🛠 Fix: LAN-клиенты (Happ/HY2) не подключаются при включённом KOX
+
+- **Причина**: весь TCP/443 с WiFi перехватывался прозрачным прокси Xray; UDP/443
+  блокировался QUIC-блоком — нативный VPN-клиент на ПК/телефоне не мог поднять туннель.
+- **`99-kox-nat.sh`**: RETURN в `XRAY_REDIRECT` и цепочка `KOX_QUIC` для IP из
+  `bypass-ips.txt` / `bypass-ips.auto` (серверы подписки + свои).
+- **`kox bypass add|del|list`**: ручное добавление внешних VPN-серверов для LAN-клиентов.
+- **`kox-lib.sh`**: авто-sync IP из подписки и kox.conf; routing direct по маркеру `192.0.2.254/32`.
+
 ## 2026.07.15.20
 
 ### 🛠 Fix: стабильность VPN после падений (iptables + cron + failover)

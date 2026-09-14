@@ -16,3 +16,4 @@ pps.whatsapp.net
 dit.whatsapp.net
 graph.whatsapp.com
 v.whatsapp.net
+whatsapp.biz

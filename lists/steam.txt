@@ -8,3 +8,9 @@ steamcontent.com
 steamcdn-a.akamaihd.net
 store.steampowered.com
 steamgames.com
+steamserver.net
+steamusercontent.com
+steam-chat.com
+api.steampowered.com
+login.steampowered.com
+help.steampowered.com

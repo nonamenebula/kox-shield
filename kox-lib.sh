@@ -140,11 +140,96 @@ kox_ensure_https_tools() {
   fi
 }
 
+KOX_BYPASS_IPS_FILE="${KOX_BYPASS_IPS_FILE:-/opt/etc/xray/bypass-ips.txt}"
+KOX_BYPASS_IPS_AUTO="${KOX_BYPASS_IPS_AUTO:-/opt/etc/xray/bypass-ips.auto}"
+KOX_BYPASS_LAN_FILE="${KOX_BYPASS_LAN_FILE:-/opt/etc/xray/bypass-lan.txt}"
+KOX_BYPASS_MARKER="192.0.2.254/32"
+
 # Активен ли QUIC-блок (UDP/443 → DROP на LAN).
 kox_quic_block_active() {
+  iptables -t mangle -C PREROUTING -i br0 -j KOX_QUIC 2>/dev/null && return 0
   iptables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
+  ip6tables -t mangle -C PREROUTING -i br0 -j KOX_QUIC 2>/dev/null && return 0
   ip6tables -t mangle -C PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null && return 0
   return 1
+}
+
+# Отдельный UDP-вход 10810 (TPROXY). TCP 10808 не трогаем — иначе ноут зависает.
+kox_xray_ensure_udp_inbound() {
+  _conf="${1:-/opt/etc/xray/config.json}"
+  [ -f "$_conf" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  _need=0
+  jq -e '.inbounds[] | select(.tag=="kox-tproxy-udp" and .port==10810 and .streamSettings.sockopt.tproxy=="tproxy")' "$_conf" >/dev/null 2>&1 || _need=1
+  jq -e '.routing.rules[] | select(.inboundTag != null and (.inboundTag | index("kox-tproxy-udp")) and .outboundTag=="kox-proxy")' "$_conf" >/dev/null 2>&1 || _need=1
+  jq -e '.inbounds[] | select(.port==10808 or .tag=="kox-transparent") | .streamSettings.sockopt.tproxy' "$_conf" >/dev/null 2>&1 && _need=1
+  [ "$_need" = "0" ] && return 0
+  _tmp="${_conf}.udp.$$"
+  jq '
+    (.inbounds[] | select(.port==10808 or .tag=="kox-transparent")) |= (del(.streamSettings))
+    | .inbounds |= (map(select(.tag != "kox-tproxy-udp")) + [{
+        tag: "kox-tproxy-udp",
+        listen: "0.0.0.0",
+        port: 10810,
+        protocol: "dokodemo-door",
+        settings: {network: "udp", followRedirect: true},
+        streamSettings: {sockopt: {tproxy: "tproxy"}},
+        sniffing: {enabled: true, destOverride: ["quic"]}
+      }])
+    | .routing.rules |= (
+        map(select(.inboundTag == null or (.inboundTag | index("kox-tproxy-udp") | not)))
+        | . as $rules
+        | (
+            $rules
+            | to_entries
+            | map(select(.value.network=="udp" and (.value.port|not) and (.value.inboundTag|not)))
+            | .[0].key
+          ) as $i
+        | if $i != null then
+            $rules[:$i] + [{"type":"field","inboundTag":["kox-tproxy-udp"],"outboundTag":"kox-proxy"}] + $rules[$i:]
+          else
+            $rules + [{"type":"field","inboundTag":["kox-tproxy-udp"],"outboundTag":"kox-proxy"}]
+          end
+      )
+  ' "$_conf" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 1; }
+  jq -e . "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 1; }
+  mv "$_tmp" "$_conf"
+  return 2
+}
+
+kox_udp_tproxy_active() {
+  iptables -t mangle -C PREROUTING -i br0 -j KOX_UDP 2>/dev/null || return 1
+  iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q TPROXY
+}
+
+# Clash Royale / CoC / Brawl Stars: TCP 9339 → kox-proxy (до catch-all tcp).
+kox_xray_ensure_game_ports() {
+  _conf="${1:-/opt/etc/xray/config.json}"
+  [ -f "$_conf" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e '.routing.rules[] | select((.port|tostring)=="9339" and .outboundTag=="kox-proxy")' \
+    "$_conf" >/dev/null 2>&1 && return 0
+  _tmp="${_conf}.game.$$"
+  jq '
+    .routing.rules |= (
+      map(select((.port|tostring) != "9339"))
+      | . as $rules
+      | (
+          $rules
+          | to_entries
+          | map(select(.value.network=="tcp" and (.value.port|not) and (.value.inboundTag|not)))
+          | .[0].key
+        ) as $i
+      | if $i != null then
+          $rules[:$i] + [{"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"}] + $rules[$i:]
+        else
+          $rules + [{"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"}]
+        end
+    )
+  ' "$_conf" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 1; }
+  jq -e . "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 1; }
+  mv "$_tmp" "$_conf"
+  return 2
 }
 
 # Скачать и установить 99-kox-nat.sh (CDN / GitHub).
@@ -183,6 +268,25 @@ kox_failover_enabled() {
 kox_apply_nat_rules() {
   _nat="/opt/etc/ndm/netfilter.d/99-kox-nat.sh"
   [ -f "$_nat" ] || return 1
+  _xray_need=0
+  if type kox_xray_ensure_udp_inbound >/dev/null 2>&1; then
+    kox_xray_ensure_udp_inbound /opt/etc/xray/config.json
+    [ "$?" = "2" ] && _xray_need=1
+  fi
+  if type kox_xray_ensure_game_ports >/dev/null 2>&1; then
+    kox_xray_ensure_game_ports /opt/etc/xray/config.json
+    [ "$?" = "2" ] && _xray_need=1
+  fi
+  if [ "$_xray_need" = "1" ]; then
+    ulimit -n 65535 2>/dev/null || true
+    /opt/etc/init.d/S24xray restart >/dev/null 2>&1 || true
+    _w=0
+    while [ "$_w" -lt 12 ]; do
+      netstat -ln 2>/dev/null | grep -q ':10808 ' && break
+      sleep 1
+      _w=$((_w + 1))
+    done
+  fi
   _try=0
   while [ "$_try" -lt 3 ]; do
     sh "$_nat" 2>/dev/null || return 1
@@ -196,13 +300,49 @@ kox_apply_nat_rules() {
 
 # Снять NAT Xray + QUIC-блок (при падении Xray / kox off).
 kox_iptables_remove_quic_block() {
+  iptables  -t mangle -D PREROUTING -i br0 -j KOX_QUIC 2>/dev/null || true
+  iptables  -t mangle -F KOX_QUIC 2>/dev/null || true
+  iptables  -t mangle -X KOX_QUIC 2>/dev/null || true
   iptables  -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+  iptables  -t mangle -D PREROUTING -i br0 -j KOX_UDP 2>/dev/null || true
+  iptables  -t mangle -D PREROUTING -i br0 -p udp -m socket -j KOX_DIVERT 2>/dev/null || true
+  iptables  -t mangle -F KOX_UDP 2>/dev/null || true
+  iptables  -t mangle -X KOX_UDP 2>/dev/null || true
+  iptables  -t mangle -F KOX_DIVERT 2>/dev/null || true
+  iptables  -t mangle -X KOX_DIVERT 2>/dev/null || true
+  ip6tables -t mangle -D PREROUTING -i br0 -j KOX_QUIC 2>/dev/null || true
+  ip6tables -t mangle -F KOX_QUIC 2>/dev/null || true
+  ip6tables -t mangle -X KOX_QUIC 2>/dev/null || true
   ip6tables -t mangle -D PREROUTING -i br0 -p udp --dport 443 -j DROP 2>/dev/null || true
+  ip rule del fwmark 0x2c0c lookup 252 2>/dev/null || true
+  ip route flush table 252 2>/dev/null || true
+  ip -6 rule del fwmark 0x2c0c lookup 252 2>/dev/null || true
+  ip -6 route flush table 252 2>/dev/null || true
 }
 
 kox_iptables_remove_xray_nat() {
+  _lanf="/opt/etc/xray/bypass-lan.txt"
+  if [ -f "$_lanf" ]; then
+    while IFS= read -r _lan _rest; do
+      case "$_lan" in ''|'#'*) continue ;; esac
+      printf '%s' "$_lan" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || continue
+      iptables  -t nat -D PREROUTING -i br0 -s "$_lan" -j RETURN 2>/dev/null || true
+      iptables  -t mangle -D PREROUTING -i br0 -s "$_lan" -j RETURN 2>/dev/null || true
+    done < "$_lanf"
+  fi
+  for _bf in /opt/etc/xray/bypass-ips.auto /opt/etc/xray/bypass-ips.txt; do
+    [ -f "$_bf" ] || continue
+    while IFS= read -r _ip _rest; do
+      case "$_ip" in ''|'#'*) continue ;; esac
+      _plain="${_ip%%/*}"
+      printf '%s' "$_plain" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || continue
+      iptables -t nat -D PREROUTING -i br0 -d "${_plain}/32" -p tcp -j RETURN 2>/dev/null || true
+      iptables -t nat -D PREROUTING -i br0 -d "${_plain}/32" -p udp -j RETURN 2>/dev/null || true
+    done < "$_bf"
+  done
   iptables  -t nat -F XRAY_REDIRECT 2>/dev/null || true
   iptables  -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
+  iptables  -t nat -D PREROUTING -i br0 -p udp -j XRAY_REDIRECT 2>/dev/null || true
   iptables  -t nat -D PREROUTING -i br0 -p udp --dport 443 -j XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -F XRAY_REDIRECT 2>/dev/null || true
   ip6tables -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
@@ -432,8 +572,8 @@ kox_conf_set() {
 
 kox_hysteria_write_conf() {
   _uri="$1"
-  _hconf="${HYSTERIA_CONF:-/opt/etc/hysteria/client.yaml}"
-  _hport="${HYSTERIA_SOCKS_PORT:-11888}"
+  _hconf="${2:-${HYSTERIA_CONF:-/opt/etc/hysteria/client.yaml}}"
+  _hport="${3:-${HYSTERIA_SOCKS_PORT:-11888}}"
   _auth=$(uri_userinfo "$_uri")
   _host=$(uri_host "$_uri")
   _port=$(uri_port "$_uri"); [ -z "$_port" ] && _port=443
@@ -453,7 +593,34 @@ kox_hysteria_write_conf() {
     fi
     printf 'socks5:\n  listen: 127.0.0.1:%s\n' "$_hport"
     printf 'fastOpen: true\n'
+    _wan=$(kox_default_wan_dev)
+    if [ -n "$_wan" ]; then
+      printf 'quic:\n  sockopts:\n    bindInterface: %s\n' "$_wan"
+    fi
   } > "$_hconf"
+}
+
+# IPv4 WAN (eth3 и т.п.). Без bindInterface hysteria садится на [::]
+# и на Keenetic часто падает: sendto network is unreachable.
+kox_default_wan_dev() {
+  ip -4 route show default 2>/dev/null | awk '{
+    for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit }
+  }'
+}
+
+kox_hysteria_ensure_wan_bind() {
+  _hconf="${1:-${HYSTERIA_CONF:-/opt/etc/hysteria/client.yaml}}"
+  [ -f "$_hconf" ] || return 0
+  grep -q 'bindInterface:' "$_hconf" 2>/dev/null && return 0
+  _wan=$(kox_default_wan_dev)
+  [ -n "$_wan" ] || return 0
+  printf '\nquic:\n  sockopts:\n    bindInterface: %s\n' "$_wan" >> "$_hconf"
+}
+
+kox_hysteria_alive() {
+  _port="${1:-${HYSTERIA_SOCKS_PORT:-11888}}"
+  pgrep -f hysteria >/dev/null 2>&1 || return 1
+  netstat -ln 2>/dev/null | grep -q ":${_port} "
 }
 
 kox_show_server_info() {
@@ -477,4 +644,170 @@ kox_show_server_info() {
   fi
   printf 'PROTO=%s\nSRV=%s\nPORT=%s\nAUTH=%s\nSNI=%s\nFLOW=%s\nSUB=%s\n' \
     "$_proto" "$_srv" "$_port" "$_auth" "$_sni" "$_flow" "${KOX_SUB_URL:-}"
+}
+
+# ── Bypass VPN server IPs (LAN clients with Happ/HY2/OpenVPN) ───────────────
+
+kox_bypass_ip_normalize() {
+  _ip="$1"
+  case "$_ip" in
+    */*) printf '%s' "$_ip" ;;
+    *)   printf '%s/32' "$_ip" ;;
+  esac
+}
+
+# Добавить IP в список обхода (если ещё нет), вывести на stdout.
+kox_bypass_collect_add() {
+  _raw="$1"
+  _seen="$2"
+  [ -z "$_raw" ] && return 0
+  case "$_raw" in
+    *:*|*[\|\&\;]*) return 0 ;;
+  esac
+  _plain="${_raw%%/*}"
+  kox_validate_ip_cidr "$_raw" || return 0
+  grep -qxF "$_plain" "$_seen" 2>/dev/null && return 0
+  printf '%s\n' "$_plain" >> "$_seen"
+  printf '%s\n' "$_plain"
+}
+
+# Все IP для обхода перехвата (уникальные, по одному на строку).
+kox_bypass_ips_collect() {
+  _seen="/tmp/kox-bypass-seen.$$"
+  : > "$_seen"
+  if [ -f /opt/etc/xray/kox.conf ]; then
+    # shellcheck disable=SC1091
+    . /opt/etc/xray/kox.conf 2>/dev/null
+  fi
+  kox_bypass_collect_add "${KOX_SERVER:-}" "$_seen"
+  kox_bypass_collect_add "${KOX_BACKUP_HOST:-}" "$_seen"
+  kox_bypass_collect_add "${KOX_PREFERRED_HOST:-}" "$_seen"
+  kox_bypass_collect_add "${KOX_CDN_IP:-185.154.193.130}" "$_seen"
+  case "${KOX_RELAY_HOST:-}" in
+    *.*.*.*) kox_bypass_collect_add "${KOX_RELAY_HOST}" "$_seen" ;;
+  esac
+  for _f in "$KOX_BYPASS_IPS_AUTO" "$KOX_BYPASS_IPS_FILE"; do
+    [ -f "$_f" ] || continue
+    while IFS= read -r _line; do
+      _line=$(printf '%s' "$_line" | sed 's/#.*//; s/^[ \t]*//; s/[ \t]*$//')
+      [ -n "$_line" ] && kox_bypass_collect_add "$_line" "$_seen"
+    done < "$_f"
+  done
+  for _cache in /tmp/kox-cli-servers.txt /tmp/kox-servers.txt; do
+    [ -f "$_cache" ] || continue
+    while IFS= read -r _line; do
+      _h=$(printf '%s' "$_line" | cut -f2)
+      kox_bypass_collect_add "$_h" "$_seen"
+    done < "$_cache" 2>/dev/null
+  done
+  rm -f "$_seen"
+}
+
+# Обновить bypass-ips.auto из кэша подписки + kox.conf.
+kox_bypass_ips_sync_auto() {
+  _tmp="/tmp/kox-bypass-auto.$$"
+  kox_bypass_ips_collect > "$_tmp" 2>/dev/null || : > "$_tmp"
+  mkdir -p "$(dirname "$KOX_BYPASS_IPS_AUTO")"
+  if [ -f "$KOX_BYPASS_IPS_FILE" ]; then
+    while IFS= read -r _u; do
+      _u=$(printf '%s' "$_u" | sed 's/#.*//; s/^[ \t]*//; s/[ \t]*$//')
+      [ -n "$_u" ] && grep -qxF "${_u%%/*}" "$_tmp" 2>/dev/null || \
+        printf '%s\n' "${_u%%/*}" >> "$_tmp"
+    done < "$KOX_BYPASS_IPS_FILE"
+  fi
+  sort -u "$_tmp" 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' > "$KOX_BYPASS_IPS_AUTO" 2>/dev/null || \
+    mv "$_tmp" "$KOX_BYPASS_IPS_AUTO"
+  rm -f "$_tmp"
+}
+
+# Правило routing direct по IP (маркер 192.0.2.254/32).
+kox_sync_bypass_routing() {
+  _conf="${1:-/opt/etc/xray/config.json}"
+  _marker="$KOX_BYPASS_MARKER"
+  [ -f "$_conf" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 0
+  _iplist=$(kox_bypass_ips_collect | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u | \
+    jq -R -s 'split("\n") | map(select(length>0)) | map(. + "/32")' 2>/dev/null) || return 1
+  _tmp="/tmp/kox-bypass-route.$$"
+  jq --arg marker "$_marker" --argjson bypass "$_iplist" '
+    ($bypass + [$marker]) as $all |
+    if (.routing.rules | map(select((.ip // []) | index($marker))) | length) > 0 then
+      .routing.rules = [.routing.rules[] |
+        if ((.ip // []) | index($marker)) then .ip = $all else . end]
+    else
+      .routing.rules = [.routing.rules[0],
+        {"type":"field","ip":$all,"outboundTag":"direct"}] + .routing.rules[1:]
+    end
+  ' "$_conf" > "$_tmp" 2>/dev/null || return 1
+  [ -s "$_tmp" ] || return 1
+  mv "$_tmp" "$_conf"
+  return 0
+}
+
+kox_bypass_refresh() {
+  kox_bypass_ips_sync_auto
+  kox_sync_bypass_routing "${2:-/opt/etc/xray/config.json}" 2>/dev/null || true
+  if [ "${1:-}" != "no-reload" ] && type kox_reload_config >/dev/null 2>&1; then
+    kox_reload_config 2>/dev/null || true
+  fi
+  if [ ! -f /tmp/kox-vpn-off ] && pgrep xray >/dev/null 2>&1; then
+    kox_apply_nat_rules 2>/dev/null || \
+      sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh 2>/dev/null || true
+  fi
+}
+
+kox_bypass_ip_add() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  kox_validate_ip_cidr "$_ip" || return 1
+  _plain="${_ip%%/*}"
+  mkdir -p "$(dirname "$KOX_BYPASS_IPS_FILE")"
+  touch "$KOX_BYPASS_IPS_FILE"
+  grep -qxF "$_plain" "$KOX_BYPASS_IPS_FILE" 2>/dev/null && return 0
+  printf '%s\n' "$_plain" >> "$KOX_BYPASS_IPS_FILE"
+  kox_bypass_refresh
+  return 0
+}
+
+kox_bypass_lan_add() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  printf '%s' "$_ip" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || return 1
+  mkdir -p "$(dirname "$KOX_BYPASS_LAN_FILE")"
+  touch "$KOX_BYPASS_LAN_FILE"
+  grep -qxF "$_ip" "$KOX_BYPASS_LAN_FILE" 2>/dev/null && return 0
+  printf '%s\n' "$_ip" >> "$KOX_BYPASS_LAN_FILE"
+  kox_bypass_flush_lan_conntrack "$_ip"
+  kox_bypass_refresh no-reload
+  return 0
+}
+
+# Сбросить NAT-сессии LAN-клиента (старые TCP через Xray 10808).
+kox_bypass_flush_lan_conntrack() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 0
+  if command -v conntrack >/dev/null 2>&1; then
+    conntrack -D -s "$_ip" 2>/dev/null || true
+  fi
+}
+
+kox_bypass_lan_del() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  [ -f "$KOX_BYPASS_LAN_FILE" ] || return 0
+  grep -vxF "$_ip" "$KOX_BYPASS_LAN_FILE" > /tmp/kox-bypass-lan.$$ 2>/dev/null && \
+    mv /tmp/kox-bypass-lan.$$ "$KOX_BYPASS_LAN_FILE"
+  kox_bypass_refresh no-reload
+  return 0
+}
+
+kox_bypass_ip_del() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  _plain="${_ip%%/*}"
+  [ -f "$KOX_BYPASS_IPS_FILE" ] || return 0
+  grep -vxF "$_plain" "$KOX_BYPASS_IPS_FILE" > /tmp/kox-bypass-del.$$ 2>/dev/null && \
+    mv /tmp/kox-bypass-del.$$ "$KOX_BYPASS_IPS_FILE"
+  kox_bypass_refresh
+  return 0
 }

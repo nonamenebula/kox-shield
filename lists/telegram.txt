@@ -22,3 +22,5 @@ contest.com
 updates.telegram.org
 instantview.telegram.org
 translations.telegram.org
+telegram-cdn.org
+cdn-telegram.org

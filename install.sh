@@ -607,6 +607,15 @@ generate_config() {
       "sniffing": {"enabled": true, "destOverride": ["http","tls","quic"]}
     },
     {
+      "tag": "kox-tproxy-udp",
+      "listen": "0.0.0.0",
+      "port": 10810,
+      "protocol": "dokodemo-door",
+      "settings": {"network": "udp", "followRedirect": true},
+      "streamSettings": {"sockopt": {"tproxy": "tproxy"}},
+      "sniffing": {"enabled": true, "destOverride": ["quic"]}
+    },
+    {
       "tag": "socks-local",
       "listen": "127.0.0.1",
       "port": 10809,
@@ -637,6 +646,7 @@ generate_config() {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       {"type":"field","ip":["0.0.0.0/8","10.0.0.0/8","100.64.0.0/10","127.0.0.0/8","169.254.0.0/16","172.16.0.0/12","192.0.0.0/24","192.168.0.0/16","198.18.0.0/15","198.51.100.0/24","203.0.113.0/24","224.0.0.0/4","240.0.0.0/4"],"outboundTag":"direct"},
+      {"type":"field","ip":["192.0.2.254/32"],"outboundTag":"direct"},
       {"type":"field","domain":["domain:${VLESS_HOST}"],"outboundTag":"direct"},
       {"type":"field","network":"udp","port":"53","outboundTag":"direct"},
       {
@@ -651,12 +661,15 @@ generate_config() {
           "domain:instagram.com",     "domain:cdninstagram.com",   "domain:threads.net",
           "domain:facebook.com",      "domain:fbcdn.net",          "domain:fb.com",
           "domain:discord.com",       "domain:discord.gg",         "domain:discordapp.com",
+          "domain:discord.media",     "domain:discordapp.net",
           "domain:tiktok.com",        "domain:tiktokcdn.com",
           "domain:spotify.com",       "domain:scdn.co",
           "domain:netflix.com",       "domain:nflxext.com",        "domain:nflxvideo.net",
           "domain:openai.com",        "domain:chatgpt.com",        "domain:oaiusercontent.com",
           "domain:claude.ai",         "domain:anthropic.com",
-          "domain:steampowered.com",  "domain:steamcommunity.com",
+          "domain:steampowered.com",  "domain:steamcommunity.com", "domain:steamserver.net",
+          "domain:clashroyale.com",   "domain:clashroyaleapp.com", "domain:supercell.com",
+          "domain:brawlstars.com",    "domain:brawlstarsgame.com", "domain:clashofclans.com",
           "domain:reddit.com",        "domain:redd.it",
           "domain:linkedin.com",      "domain:licdn.com",
           "domain:canva.com",
@@ -688,6 +701,8 @@ generate_config() {
         ],
         "outboundTag": "kox-proxy"
       },
+      {"type":"field","inboundTag":["kox-tproxy-udp"],"outboundTag":"kox-proxy"},
+      {"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"},
       {"type":"field","network":"udp","outboundTag":"direct"},
       {"type":"field","network":"tcp","outboundTag":"direct"}
     ]

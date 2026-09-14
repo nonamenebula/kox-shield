@@ -1,14 +1,14 @@
 {
-  "version": "2026.04.29",
+  "version": "2026.09.14",
   "categories": [
     {
       "slug": "telegram",
       "name": "Telegram",
       "emoji": "✈️",
       "file": "telegram.txt",
-      "domains": 21,
+      "domains": 23,
       "cidrs": 0,
-      "total": 21
+      "total": 23
     },
     {
       "slug": "youtube",
@@ -24,9 +24,9 @@
       "name": "WhatsApp",
       "emoji": "💬",
       "file": "whatsapp.txt",
-      "domains": 15,
+      "domains": 16,
       "cidrs": 0,
-      "total": 15
+      "total": 16
     },
     {
       "slug": "twitter-x",
@@ -60,9 +60,9 @@
       "name": "Discord",
       "emoji": "🎮",
       "file": "discord.txt",
-      "domains": 8,
+      "domains": 16,
       "cidrs": 0,
-      "total": 8
+      "total": 16
     },
     {
       "slug": "tiktok",
@@ -114,9 +114,9 @@
       "name": "Steam",
       "emoji": "🎮",
       "file": "steam.txt",
-      "domains": 7,
+      "domains": 13,
       "cidrs": 0,
-      "total": 7
+      "total": 13
     },
     {
       "slug": "reddit",
@@ -222,9 +222,9 @@
       "name": "Signal",
       "emoji": "🔒",
       "file": "signal.txt",
-      "domains": 3,
+      "domains": 5,
       "cidrs": 0,
-      "total": 3
+      "total": 5
     },
     {
       "slug": "clubhouse",
@@ -258,9 +258,9 @@
       "name": "Supercell (Clash Royale, CoC, Brawl Stars, Hay Day)",
       "emoji": "🎯",
       "file": "supercell.txt",
-      "domains": 21,
-      "cidrs": 1,
-      "total": 22
+      "domains": 37,
+      "cidrs": 2,
+      "total": 39
     },
     {
       "slug": "other",

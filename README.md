@@ -93,7 +93,9 @@ KOX Shield понимает оба формата ссылок — можно у
 Подключитесь к роутеру по SSH (порт 222) и выполните одну команду:
 
 ```bash
-wget -O /tmp/kox-install.sh https://raw.githubusercontent.com/nonamenebula/kox-shield/main/install.sh && sh /tmp/kox-install.sh
+# Встроенный wget на Keenetic не умеет HTTPS — нужен curl из Entware:
+/opt/bin/opkg update && /opt/bin/opkg install curl ca-certificates
+/opt/bin/curl -fsSL -o /tmp/kox-install.sh https://kox.nonamenebula.ru/static/kox-shield/install.sh && sh /tmp/kox-install.sh
 ```
 
 > **Требования:** Keenetic с установленным [Entware](https://help.keenetic.com/hc/ru/articles/360021214160)
@@ -299,7 +301,9 @@ KOX_SUB_URL="https://kox.nonamenebula.ru/c/YOUR_TOKEN"
 **Главное отличие KOX Shield:** если VPN перестаёт работать — интернет не пропадает.
 
 Как это работает:
-1. **iptables** перехватывает только **порты 80 и 443** (HTTP/HTTPS) — не весь TCP
+1. **iptables** перехватывает **TCP 80/443** (HTTP/HTTPS) и отдельно **IPv4 UDP**
+   для звонков/игр (TPROXY → 10810). UDP/443 (QUIC) по-прежнему режется, чтобы
+   YouTube шёл через TCP/туннель — не весь TCP и не весь UDP/443
 2. **Watchdog** запускается **каждую минуту** и проверяет:
    - Работает ли процесс Xray и слушает ли порт 10808
    - В режиме Hysteria2 — клиент `hysteria` и SOCKS `127.0.0.1:11888`
@@ -329,20 +333,20 @@ kox list-load all      # добавить всё сразу
 
 | # | Категория | Что включено |
 |---|-----------|--------------|
-| ✈️ | `telegram` | Telegram, WebApp, Telegraph (21 домен) |
+| ✈️ | `telegram` | Telegram, WebApp, Telegraph (23 домена) |
 | 📺 | `youtube` | YouTube, Shorts, API (7 доменов) |
-| 💬 | `whatsapp` | WhatsApp, wa.me (15 доменов) |
+| 💬 | `whatsapp` | WhatsApp, wa.me (16 доменов) |
 | 🐦 | `twitter-x` | Twitter / X (12 доменов) |
 | 📸 | `instagram` | Instagram, Threads (5 доменов) |
 | 👤 | `facebook` | Facebook, Messenger (8д + 10 IP) |
-| 🎮 | `discord` | Discord, CDN (8 доменов) |
+| 🎮 | `discord` | Discord, голос/CDN (16 доменов) |
 | 🎵 | `tiktok` | TikTok (8 доменов) |
 | 🎶 | `spotify` | Spotify (5 доменов) |
 | 🎬 | `netflix` | Netflix (7 доменов) |
 | 🤖 | `chatgpt-openai` | ChatGPT, Claude, Gemini (13 доменов) |
 | 🔍 | `google` | Google accounts, Gemini (5 доменов) |
-| 🎮 | `steam` | Steam (7 доменов) |
-| 🎯 | `supercell` | Supercell: Clash Royale, CoC, Brawl Stars (21 домен + IP) |
+| 🎮 | `steam` | Steam (13 доменов) |
+| 🎯 | `supercell` | Clash Royale, CoC, Brawl Stars (37 доменов + AS212916) |
 | 🌐 | `reddit` | Reddit (6 доменов) |
 | 💼 | `linkedin` | LinkedIn (3 домена) |
 | 🎨 | `canva` | Canva (3 домена) |
@@ -353,7 +357,7 @@ kox list-load all      # добавить всё сразу
 | 💻 | `github-dev` | GitHub, npm, Docker, GitLab, StackOverflow (16 доменов) |
 | 🎵 | `soundcloud` | SoundCloud (2 домена) |
 | 📱 | `viber` | Viber (2 домена) |
-| 🔒 | `signal` | Signal (3 домена) |
+| 🔒 | `signal` | Signal (5 доменов) |
 | 📌 | `pinterest` | Pinterest (2 домена) |
 | 📶 | `telegram-ip` | Telegram IP для звонков (13 подсетей) |
 | 📦 | `other` | Patreon, PayPal, BBC, Wikipedia и др. (25 доменов) |
