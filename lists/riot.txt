@@ -1,0 +1,15 @@
+# KOX Shield — Riot Games (Valorant, LoL, TFT)
+# Riot ушёл из РФ; клиент и матчмейкинг без VPN не поднимаются.
+
+# domains
+riotgames.com
+riotcdn.net
+riot-games.com
+pvp.net
+leagueoflegends.com
+playvalorant.com
+rgpub.io
+rstatic.net
+lolstatic.com
+lolstatic-a.akamaihd.net
+lolesports.com

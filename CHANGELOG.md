@@ -1,5 +1,16 @@
 # CHANGELOG — KOX Shield
 
+## 2026.09.14.23
+
+### ✨ Игры, которые в РФ не открываются + починка обновления списков
+
+- Новые категории: **`roblox`** (официальный блок РКН), **`riot`**, **`blizzard`**,
+  **`epic`**, **`minecraft`**.
+- `kox list-update` берёт списки **с CDN первым** — `raw.githubusercontent.com`
+  мог отдавать старый `LISTS_VERSION`, и пользователи не видели обновление.
+- Пользователям: `kox upgrade`, затем `kox list-update`, затем
+  `kox list-load roblox riot blizzard epic minecraft` (или `all`).
+
 ## 2026.09.14.22
 
 ### ✨ Списки игр и звонков + Clash Royale (TCP 9339)

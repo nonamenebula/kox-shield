@@ -1,0 +1,10 @@
+# KOX Shield — Minecraft / Mojang
+# РКН официально не блокировал; Realms, логин Microsoft и магазин из РФ часто падают.
+
+# domains
+minecraft.net
+mojang.com
+minecraftservices.com
+minecraft-services.net
+realms.minecraft.net
+textures.minecraft.net

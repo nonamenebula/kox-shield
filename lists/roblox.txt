@@ -1,0 +1,9 @@
+# KOX Shield — Roblox (РКН, декабрь 2025)
+# Официальная блокировка в РФ. Игровой UDP закрывает TPROXY 10810.
+
+# domains
+roblox.com
+roblox.net
+rbxcdn.com
+rbx.com
+robloxlabs.com

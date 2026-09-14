@@ -1,0 +1,11 @@
+# KOX Shield — Battle.net / Blizzard (WoW, Overwatch, Diablo, Hearthstone)
+# Компания ушла из РФ; лаунчер и игра часто не коннектятся без VPN.
+
+# domains
+blizzard.com
+battle.net
+battlenet.com
+playoverwatch.com
+worldofwarcraft.com
+blizzard.eu
+blzddist1-a.akamaihd.net

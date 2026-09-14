@@ -74,13 +74,13 @@ kox_fetch_url_to_file() {
 }
 
 # Файл из lists/ (categories.json, youtube.txt, LISTS_VERSION, …).
-# Сначала GitHub (источник), при недоступности — зеркало KOX CDN.
+# Сначала CDN (без кэша raw.githubusercontent.com), затем GitHub.
 kox_fetch_list_rel() {
   _rel="$1"
   _dest="$2"
   _max="${3:-25}"
-  kox_fetch_url_to_file "${GITHUB_LISTS}/${_rel}" "$_dest" "$_max" && return 0
   kox_fetch_url_to_file "${KOX_LISTS_CDN}/${_rel}" "$_dest" "$_max" && return 0
+  kox_fetch_url_to_file "${GITHUB_LISTS}/${_rel}" "$_dest" "$_max" && return 0
   return 1
 }
 

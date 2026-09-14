@@ -1,0 +1,10 @@
+# KOX Shield — Epic Games / Fortnite
+# РКН игру не блокировал, но лаунчер, логин и матчи из РФ часто недоступны.
+
+# domains
+epicgames.com
+epicgamescdn.com
+fortnite.com
+unrealengine.com
+ol.epicgames.com
+help.fortnite.com

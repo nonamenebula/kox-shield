@@ -346,6 +346,11 @@ kox list-load all      # добавить всё сразу
 | 🤖 | `chatgpt-openai` | ChatGPT, Claude, Gemini (13 доменов) |
 | 🔍 | `google` | Google accounts, Gemini (5 доменов) |
 | 🎮 | `steam` | Steam (13 доменов) |
+| 🧱 | `roblox` | Roblox — блок РКН (5 доменов) |
+| 🎯 | `riot` | Valorant, LoL (11 доменов) |
+| ❄️ | `blizzard` | Battle.net, WoW, Overwatch (7 доменов) |
+| 🏝️ | `epic` | Epic Games, Fortnite (6 доменов) |
+| 🟫 | `minecraft` | Minecraft, Mojang, Realms (6 доменов) |
 | 🎯 | `supercell` | Clash Royale, CoC, Brawl Stars (37 доменов + AS212916) |
 | 🌐 | `reddit` | Reddit (6 доменов) |
 | 💼 | `linkedin` | LinkedIn (3 домена) |

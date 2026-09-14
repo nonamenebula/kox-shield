@@ -119,6 +119,51 @@
       "total": 13
     },
     {
+      "slug": "roblox",
+      "name": "Roblox (блок РКН)",
+      "emoji": "🧱",
+      "file": "roblox.txt",
+      "domains": 5,
+      "cidrs": 0,
+      "total": 5
+    },
+    {
+      "slug": "riot",
+      "name": "Riot (Valorant, LoL)",
+      "emoji": "🎯",
+      "file": "riot.txt",
+      "domains": 11,
+      "cidrs": 0,
+      "total": 11
+    },
+    {
+      "slug": "blizzard",
+      "name": "Battle.net / Blizzard",
+      "emoji": "❄️",
+      "file": "blizzard.txt",
+      "domains": 7,
+      "cidrs": 0,
+      "total": 7
+    },
+    {
+      "slug": "epic",
+      "name": "Epic / Fortnite",
+      "emoji": "🏝️",
+      "file": "epic.txt",
+      "domains": 6,
+      "cidrs": 0,
+      "total": 6
+    },
+    {
+      "slug": "minecraft",
+      "name": "Minecraft / Mojang",
+      "emoji": "🟫",
+      "file": "minecraft.txt",
+      "domains": 6,
+      "cidrs": 0,
+      "total": 6
+    },
+    {
       "slug": "reddit",
       "name": "Reddit",
       "emoji": "🌐",
