@@ -102,6 +102,11 @@ _kox_bypass_quic() {
   rm -f "$_out"
 }
 _kox_bypass_quic
+# Tencent / CODM: не резать их QUIC (иначе вход в бой по таймауту). YouTube остаётся DROP.
+for _tcidr in 49.51.0.0/16 170.106.0.0/16 129.226.0.0/16 \
+              43.153.0.0/16 43.154.0.0/16 43.159.0.0/16 101.32.0.0/15; do
+  $IPTS -t mangle -A KOX_QUIC -d "$_tcidr" -p udp --dport 443 -j RETURN 2>/dev/null || true
+done
 $IPTS -t mangle -A KOX_QUIC -p udp --dport 443 -j DROP 2>/dev/null || true
 
 # IPv4 UDP (звонки/игры) → TPROXY 10810. TCP и UDP/443 не трогаем.
@@ -159,12 +164,13 @@ if [ "$IPTS" = "iptables" ]; then
       $IPTS -t mangle -A KOX_UDP -d "${_ip}/32" -j RETURN 2>/dev/null || true
     done < "$_udpb"
     rm -f "$_udpb"
-    for _p in 53 67 68 123 443 1900 5353 5000 5055 8013 8700 10000; do
+    for _p in 53 67 68 123 443 1900 5353 8700 10000; do
       $IPTS -t mangle -A KOX_UDP -p udp --dport "$_p" -j RETURN 2>/dev/null || true
     done
-    # COD Mobile / Tencent: матч и поиск игроков (официально 7500–8000 + 20000–20002)
-    $IPTS -t mangle -A KOX_UDP -p udp --dport 7500:8000 -j RETURN 2>/dev/null || true
-    $IPTS -t mangle -A KOX_UDP -p udp --dport 20000:20002 -j RETURN 2>/dev/null || true
+    # COD Mobile / Tencent: поиск и вход в бой (5055/5056, 8011, 8080, 7500–8000…)
+    $IPTS -t mangle -A KOX_UDP -p udp --dport 5000:5100 -j RETURN 2>/dev/null || true
+    $IPTS -t mangle -A KOX_UDP -p udp --dport 7500:8100 -j RETURN 2>/dev/null || true
+    $IPTS -t mangle -A KOX_UDP -p udp --dport 20000:20010 -j RETURN 2>/dev/null || true
     if $IPTS -t mangle -A KOX_UDP -p udp -j TPROXY --on-port 10810 --tproxy-mark 0x2c0c 2>/dev/null; then
       _KOX_UDP_OK=1
       if $IPTS -t mangle -N KOX_DIVERT 2>/dev/null || $IPTS -t mangle -F KOX_DIVERT 2>/dev/null; then
