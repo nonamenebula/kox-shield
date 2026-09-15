@@ -202,8 +202,9 @@ kox_udp_tproxy_active() {
   iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q TPROXY
 }
 
-# Игровые TCP-порты → kox-proxy: Supercell 9339, CODM лобби 65010 / чат 65050.
-KOX_GAME_TCP_PORTS="9339,65010,65050"
+# Игровые TCP-порты → kox-proxy. Только Supercell 9339.
+# CODM лобби/матч по UDP должен идти напрямую (иначе таймаут, нет игроков).
+KOX_GAME_TCP_PORTS="9339"
 kox_xray_ensure_game_ports() {
   _conf="${1:-/opt/etc/xray/config.json}"
   [ -f "$_conf" ] || return 1
@@ -214,7 +215,8 @@ kox_xray_ensure_game_ports() {
   _tmp="${_conf}.game.$$"
   jq --arg p "$KOX_GAME_TCP_PORTS" '
     .routing.rules |= (
-      map(select((.port|tostring) != "9339" and (.port|tostring) != $p))
+      map(select((.port|tostring) != "9339" and (.port|tostring) != $p
+        and (.port|tostring) != "9339,65010,65050"))
       | . as $rules
       | (
           $rules

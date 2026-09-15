@@ -55,12 +55,11 @@ _kox_bypass_merge() {
 }
 _kox_bypass_merge
 
-# HTTP/HTTPS + игры: Supercell 9339, CODM лобби 65010 / чат 65050
+# HTTP/HTTPS + Supercell 9339. CODM лобби/матч (UDP 5055, 20002…) — не сюда:
+# через HY2 пустой лобби и таймаут, игроки ищутся напрямую.
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
-for _gp in 9339 65010 65050; do
-  $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport "$_gp" -j REDIRECT --to-ports 10808 2>/dev/null || true
-done
+$IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 9339 -j REDIRECT --to-ports 10808 2>/dev/null || true
 # Свои IP Supercell (на случай другого порта)
 $IPTS -t nat -A XRAY_REDIRECT -d 5.180.72.0/22 -p tcp -j REDIRECT --to-ports 10808 2>/dev/null || true
 # Telegram DC — клиент/звонки на нестандартных TCP-портах
@@ -160,9 +159,12 @@ if [ "$IPTS" = "iptables" ]; then
       $IPTS -t mangle -A KOX_UDP -d "${_ip}/32" -j RETURN 2>/dev/null || true
     done < "$_udpb"
     rm -f "$_udpb"
-    for _p in 53 67 68 123 443 1900 5353; do
+    for _p in 53 67 68 123 443 1900 5353 5000 5055 8013 8700 10000; do
       $IPTS -t mangle -A KOX_UDP -p udp --dport "$_p" -j RETURN 2>/dev/null || true
     done
+    # COD Mobile / Tencent: матч и поиск игроков (официально 7500–8000 + 20000–20002)
+    $IPTS -t mangle -A KOX_UDP -p udp --dport 7500:8000 -j RETURN 2>/dev/null || true
+    $IPTS -t mangle -A KOX_UDP -p udp --dport 20000:20002 -j RETURN 2>/dev/null || true
     if $IPTS -t mangle -A KOX_UDP -p udp -j TPROXY --on-port 10810 --tproxy-mark 0x2c0c 2>/dev/null; then
       _KOX_UDP_OK=1
       if $IPTS -t mangle -N KOX_DIVERT 2>/dev/null || $IPTS -t mangle -F KOX_DIVERT 2>/dev/null; then

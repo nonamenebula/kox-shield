@@ -703,7 +703,7 @@ generate_config() {
         "outboundTag": "kox-proxy"
       },
       {"type":"field","inboundTag":["kox-tproxy-udp"],"outboundTag":"kox-proxy"},
-      {"type":"field","network":"tcp","port":"9339,65010,65050","outboundTag":"kox-proxy"},
+      {"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"},
       {"type":"field","network":"udp","outboundTag":"direct"},
       {"type":"field","network":"tcp","outboundTag":"direct"}
     ]

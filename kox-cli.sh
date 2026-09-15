@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.09.15.24"
+KOX_VERSION="2026.09.15.25"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -488,10 +488,8 @@ kox_status() {
   elif [ ! -f /tmp/kox-vpn-off ]; then
     warn "TCP 9339 не перехватывается — Clash Royale может не зайти (kox fix-nat)"
   fi
-  if iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'dpt:65010'; then
-    ok "COD Mobile: TCP 65010/65050 (лобби/чат) в туннеле"
-  elif [ ! -f /tmp/kox-vpn-off ]; then
-    warn "COD Mobile лобби (65010) не перехватывается — kox fix-nat"
+  if iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q 'dpt:5055'; then
+    ok "COD Mobile: поиск игроков (UDP 5055/20002) напрямую, не через HY2"
   fi
 
   # VPN on/off marker
