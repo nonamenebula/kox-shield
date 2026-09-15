@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.09.15.26"
+KOX_VERSION="2026.09.15.27"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -479,17 +479,14 @@ kox_status() {
     warn "QUIC-блок не активен — выполните: ${W}kox fix-nat${N}"
   fi
   if type kox_udp_tproxy_active >/dev/null 2>&1 && kox_udp_tproxy_active; then
-    ok "UDP TPROXY (10810): активен — звонки и игры через туннель"
+    ok "UDP TPROXY: только звонки TG/WhatsApp и Clash Royale; остальные игры напрямую"
   elif [ ! -f /tmp/kox-vpn-off ]; then
-    warn "UDP TPROXY не активен — звонки/игры идут мимо VPN (kox fix-nat)"
+    warn "UDP TPROXY не активен — звонки TG/WA мимо VPN (kox fix-nat)"
   fi
   if iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'dpt:9339'; then
     ok "Clash Royale / Supercell: TCP 9339 в туннеле"
   elif [ ! -f /tmp/kox-vpn-off ]; then
     warn "TCP 9339 не перехватывается — Clash Royale может не зайти (kox fix-nat)"
-  fi
-  if iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q 'dpt:5055'; then
-    ok "COD Mobile: поиск игроков (UDP 5055/20002) напрямую, не через HY2"
   fi
 
   # VPN on/off marker

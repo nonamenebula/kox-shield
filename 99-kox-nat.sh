@@ -109,7 +109,7 @@ for _tcidr in 49.51.0.0/16 170.106.0.0/16 129.226.0.0/16 \
 done
 $IPTS -t mangle -A KOX_QUIC -p udp --dport 443 -j DROP 2>/dev/null || true
 
-# IPv4 UDP (звонки/игры) → TPROXY 10810. TCP и UDP/443 не трогаем.
+# IPv4 UDP: TPROXY только звонки TG/WA и Clash Royale. Остальные игры — напрямую.
 _KOX_UDP_OK=0
 $IPTS -t mangle -D PREROUTING -i br0 -j KOX_UDP 2>/dev/null || true
 $IPTS -t mangle -D PREROUTING -i br0 -p udp -m socket -j KOX_DIVERT 2>/dev/null || true
@@ -164,14 +164,26 @@ if [ "$IPTS" = "iptables" ]; then
       $IPTS -t mangle -A KOX_UDP -d "${_ip}/32" -j RETURN 2>/dev/null || true
     done < "$_udpb"
     rm -f "$_udpb"
-    for _p in 53 67 68 123 443 1900 5353 8700 10000; do
+    # DNS/DHCP/NTP/QUIC — не трогаем. Остальной UDP игр идёт напрямую.
+    for _p in 53 67 68 123 443 1900 5353; do
       $IPTS -t mangle -A KOX_UDP -p udp --dport "$_p" -j RETURN 2>/dev/null || true
     done
-    # COD Mobile / Tencent: поиск и вход в бой (5055/5056, 8011, 8080, 7500–8000…)
-    $IPTS -t mangle -A KOX_UDP -p udp --dport 5000:5100 -j RETURN 2>/dev/null || true
-    $IPTS -t mangle -A KOX_UDP -p udp --dport 7500:8100 -j RETURN 2>/dev/null || true
-    $IPTS -t mangle -A KOX_UDP -p udp --dport 20000:20010 -j RETURN 2>/dev/null || true
-    if $IPTS -t mangle -A KOX_UDP -p udp -j TPROXY --on-port 10810 --tproxy-mark 0x2c0c 2>/dev/null; then
+    # Только звонки TG/WA и Clash Royale (свои IP). Не весь интернет-UDP.
+    _kox_udp_n=0
+    for _c in \
+      149.154.160.0/20 91.108.4.0/22 91.108.8.0/22 91.108.12.0/22 \
+      91.108.16.0/22 91.108.20.0/22 91.108.56.0/22 95.161.64.0/20 \
+      185.76.151.0/24 \
+      31.13.24.0/21 31.13.64.0/18 157.240.0.0/17 157.240.192.0/18 \
+      163.70.128.0/17 102.132.96.0/20 129.134.0.0/17 \
+      185.60.216.0/22 185.89.218.0/23 204.15.20.0/22 \
+      5.180.72.0/22
+    do
+      if $IPTS -t mangle -A KOX_UDP -d "$_c" -p udp -j TPROXY --on-port 10810 --tproxy-mark 0x2c0c 2>/dev/null; then
+        _kox_udp_n=$((_kox_udp_n + 1))
+      fi
+    done
+    if [ "$_kox_udp_n" -gt 0 ]; then
       _KOX_UDP_OK=1
       if $IPTS -t mangle -N KOX_DIVERT 2>/dev/null || $IPTS -t mangle -F KOX_DIVERT 2>/dev/null; then
         $IPTS -t mangle -F KOX_DIVERT 2>/dev/null || true
