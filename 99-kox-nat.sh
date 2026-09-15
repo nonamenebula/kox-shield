@@ -55,10 +55,12 @@ _kox_bypass_merge() {
 }
 _kox_bypass_merge
 
-# HTTP/HTTPS + игровой порт Supercell (Clash Royale / CoC / Brawl Stars = TCP 9339)
+# HTTP/HTTPS + игры: Supercell 9339, CODM лобби 65010 / чат 65050
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 443 -j REDIRECT --to-ports 10808 2>/dev/null || true
-$IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 9339 -j REDIRECT --to-ports 10808 2>/dev/null || true
+for _gp in 9339 65010 65050; do
+  $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport "$_gp" -j REDIRECT --to-ports 10808 2>/dev/null || true
+done
 # Свои IP Supercell (на случай другого порта)
 $IPTS -t nat -A XRAY_REDIRECT -d 5.180.72.0/22 -p tcp -j REDIRECT --to-ports 10808 2>/dev/null || true
 # Telegram DC — клиент/звонки на нестандартных TCP-портах

@@ -669,6 +669,7 @@ generate_config() {
           "domain:claude.ai",         "domain:anthropic.com",
           "domain:steampowered.com",  "domain:steamcommunity.com", "domain:steamserver.net",
           "domain:clashroyale.com",   "domain:clashroyaleapp.com", "domain:supercell.com",
+          "domain:callofduty.com",    "domain:activision.com",     "domain:callofdutymobile.com",
           "domain:brawlstars.com",    "domain:brawlstarsgame.com", "domain:clashofclans.com",
           "domain:reddit.com",        "domain:redd.it",
           "domain:linkedin.com",      "domain:licdn.com",
@@ -702,7 +703,7 @@ generate_config() {
         "outboundTag": "kox-proxy"
       },
       {"type":"field","inboundTag":["kox-tproxy-udp"],"outboundTag":"kox-proxy"},
-      {"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"},
+      {"type":"field","network":"tcp","port":"9339,65010,65050","outboundTag":"kox-proxy"},
       {"type":"field","network":"udp","outboundTag":"direct"},
       {"type":"field","network":"tcp","outboundTag":"direct"}
     ]

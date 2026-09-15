@@ -1,0 +1,17 @@
+# KOX Shield — Call of Duty: Mobile
+# Логин/CDN: TCP 443. Лобби/чат: TCP 65010 и 65050. Матч: UDP 7500–8000 (TPROXY).
+
+# domains — Activision / CODM
+callofduty.com
+callofdutymobile.com
+activision.com
+demonware.net
+
+# domains — Tencent (движок, античит, голос, апдейты)
+tdatamaster.com
+gcloudcs.com
+itop.qq.com
+itopsdk.com
+anticheatexpert.com
+listdl.com
+wetest.qq.com

@@ -202,17 +202,19 @@ kox_udp_tproxy_active() {
   iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q TPROXY
 }
 
-# Clash Royale / CoC / Brawl Stars: TCP 9339 → kox-proxy (до catch-all tcp).
+# Игровые TCP-порты → kox-proxy: Supercell 9339, CODM лобби 65010 / чат 65050.
+KOX_GAME_TCP_PORTS="9339,65010,65050"
 kox_xray_ensure_game_ports() {
   _conf="${1:-/opt/etc/xray/config.json}"
   [ -f "$_conf" ] || return 1
   command -v jq >/dev/null 2>&1 || return 1
-  jq -e '.routing.rules[] | select((.port|tostring)=="9339" and .outboundTag=="kox-proxy")' \
+  jq -e --arg p "$KOX_GAME_TCP_PORTS" \
+    '.routing.rules[] | select((.port|tostring)==$p and .outboundTag=="kox-proxy")' \
     "$_conf" >/dev/null 2>&1 && return 0
   _tmp="${_conf}.game.$$"
-  jq '
+  jq --arg p "$KOX_GAME_TCP_PORTS" '
     .routing.rules |= (
-      map(select((.port|tostring) != "9339"))
+      map(select((.port|tostring) != "9339" and (.port|tostring) != $p))
       | . as $rules
       | (
           $rules
@@ -221,9 +223,9 @@ kox_xray_ensure_game_ports() {
           | .[0].key
         ) as $i
       | if $i != null then
-          $rules[:$i] + [{"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"}] + $rules[$i:]
+          $rules[:$i] + [{"type":"field","network":"tcp","port":$p,"outboundTag":"kox-proxy"}] + $rules[$i:]
         else
-          $rules + [{"type":"field","network":"tcp","port":"9339","outboundTag":"kox-proxy"}]
+          $rules + [{"type":"field","network":"tcp","port":$p,"outboundTag":"kox-proxy"}]
         end
     )
   ' "$_conf" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 1; }

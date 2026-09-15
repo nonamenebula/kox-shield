@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.09.14.23"
+KOX_VERSION="2026.09.15.24"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -487,6 +487,11 @@ kox_status() {
     ok "Clash Royale / Supercell: TCP 9339 в туннеле"
   elif [ ! -f /tmp/kox-vpn-off ]; then
     warn "TCP 9339 не перехватывается — Clash Royale может не зайти (kox fix-nat)"
+  fi
+  if iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'dpt:65010'; then
+    ok "COD Mobile: TCP 65010/65050 (лобби/чат) в туннеле"
+  elif [ ! -f /tmp/kox-vpn-off ]; then
+    warn "COD Mobile лобби (65010) не перехватывается — kox fix-nat"
   fi
 
   # VPN on/off marker

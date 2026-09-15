@@ -164,6 +164,15 @@
       "total": 6
     },
     {
+      "slug": "codm",
+      "name": "Call of Duty Mobile",
+      "emoji": "🔫",
+      "file": "codm.txt",
+      "domains": 11,
+      "cidrs": 0,
+      "total": 11
+    },
+    {
       "slug": "reddit",
       "name": "Reddit",
       "emoji": "🌐",

@@ -351,6 +351,7 @@ kox list-load all      # добавить всё сразу
 | ❄️ | `blizzard` | Battle.net, WoW, Overwatch (7 доменов) |
 | 🏝️ | `epic` | Epic Games, Fortnite (6 доменов) |
 | 🟫 | `minecraft` | Minecraft, Mojang, Realms (6 доменов) |
+| 🔫 | `codm` | Call of Duty Mobile (11 доменов + TCP 65010/65050) |
 | 🎯 | `supercell` | Clash Royale, CoC, Brawl Stars (37 доменов + AS212916) |
 | 🌐 | `reddit` | Reddit (6 доменов) |
 | 💼 | `linkedin` | LinkedIn (3 домена) |
