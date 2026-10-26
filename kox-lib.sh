@@ -249,7 +249,8 @@ kox_install_nat_script() {
 
 # Есть ли REDIRECT на 10808 в XRAY_REDIRECT (иначе WiFi-клиенты без VPN).
 kox_nat_redirect_ok() {
-  iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808'
+  iptables -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808' \
+    && iptables -t nat -C PREROUTING -i br0 -p tcp -j XRAY_REDIRECT >/dev/null 2>&1
 }
 
 # switch-auto включён? (0 или >=999 = выкл)
@@ -293,7 +294,7 @@ kox_apply_nat_rules() {
   fi
   _try=0
   while [ "$_try" -lt 3 ]; do
-    sh "$_nat" 2>/dev/null || return 1
+    sh "$_nat" 2>/dev/null || true
     sh "$_nat" ip6tables 2>/dev/null || true
     kox_nat_redirect_ok && return 0
     _try=$((_try + 1))

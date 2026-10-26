@@ -15,7 +15,9 @@ pgrep xray >/dev/null 2>&1 || exit 0
 $IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
 $IPTS -t nat -F XRAY_REDIRECT 2>/dev/null || true
 $IPTS -t nat -X XRAY_REDIRECT 2>/dev/null || true
-$IPTS -t nat -N XRAY_REDIRECT 2>/dev/null || exit 1
+if ! $IPTS -t nat -N XRAY_REDIRECT 2>/dev/null; then
+  $IPTS -t nat -L XRAY_REDIRECT -n >/dev/null 2>&1 || exit 1
+fi
 
 # LAN-устройства целиком без перехвата (корп. VPN + RDP на Windows)
 for _lanf in /opt/etc/xray/bypass-lan.txt; do
@@ -251,5 +253,8 @@ _kox_bypass_lan_prerouting() {
 }
 _kox_bypass_lan_prerouting
 
-# Проверка: без REDIRECT прозрачный VPN для WiFi не работает
+# Проверка: без REDIRECT и без перехода из PREROUTING Wi‑Fi идёт мимо VPN
 $IPTS -t nat -L XRAY_REDIRECT -n 2>/dev/null | grep -q 'redir ports 10808' || exit 1
+if [ "$IPTS" = "iptables" ]; then
+  $IPTS -t nat -C PREROUTING -i br0 -p tcp -j XRAY_REDIRECT >/dev/null 2>&1 || exit 1
+fi
