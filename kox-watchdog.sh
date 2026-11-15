@@ -97,6 +97,7 @@ wd_conf_set() { kox_conf_set "$1" "$2" "$KOXCONF"; }
 wd_hysteria_write_conf() { kox_hysteria_write_conf "$1"; }
 
 wd_hysteria_start() {
+  type kox_hysteria_ensure_wan_bind >/dev/null 2>&1 && kox_hysteria_ensure_wan_bind "$HYSTERIA_CONF"
   if [ -x "$HYSTERIA_INIT" ]; then "$HYSTERIA_INIT" restart >/dev/null 2>&1
   else killall hysteria 2>/dev/null; sleep 1; "$HYSTERIA_BIN" client -c "$HYSTERIA_CONF" >> /opt/var/log/hysteria.log 2>&1 & fi
 }
@@ -602,6 +603,15 @@ if [ -f "$BOT_INIT" ]; then
   fi
 fi
 
-# ── 9. Ротация лога ───────────────────────────────────────────────────
+# ── 9. Адреса серверов из подписки — в обход, чтобы Happ видел UDP/443 ─
+# Раз в 15 минут. Правила перечитываются только если список адресов изменился.
+if type kox_bypass_sync_subscription >/dev/null 2>&1; then
+  if kox_bypass_sync_subscription; then
+    kox_bypass_refresh no-reload >/dev/null 2>&1 || true
+    log "Обход обновлён: адреса серверов из подписки"
+  fi
+fi
+
+# ── 10. Ротация лога ──────────────────────────────────────────────────
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 500 ] && \
   tail -250 "$LOGF" > "${LOGF}.tmp" && mv "${LOGF}.tmp" "$LOGF"

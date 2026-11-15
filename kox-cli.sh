@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.10.26.28"
+KOX_VERSION="2026.11.15.29"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -367,6 +367,12 @@ kox_upgrade_post() {
     ok "KOX_FAILOVER_MINUTES=10 (авто-переключение при сбое VPN; 0 или 999 = выкл)"
   fi
   kox_install_hysteria 2>/dev/null || true
+  if type kox_bypass_sync_subscription >/dev/null 2>&1; then
+    if kox_bypass_sync_subscription force; then
+      kox_bypass_refresh no-reload 2>/dev/null || true
+      ok "Обход: адреса серверов из подписки"
+    fi
+  fi
 }
 
 # OSC 8 clickable hyperlink (works in iTerm2, VSCode, Kitty, etc.)
@@ -806,6 +812,7 @@ kox_bypass_list() {
     _n=$(grep -vc '^#' "$KOX_BYPASS_IPS_FILE" 2>/dev/null || echo 0)
     info "Своих IP в ${W}${KOX_BYPASS_IPS_FILE}${N}: ${_n}"
   fi
+  info "Адреса из подписки добавляются сами, примерно раз в 15 минут."
 }
 
 kox_bypass_add() {
@@ -957,6 +964,7 @@ kox_update_sub() {
     _p=$(uri_port "$_u"); [ -z "$_p" ] && _p=443
     printf '%s\t%s\t%s\t\t\t%s\n' "$_idx" "$_h" "$_p" "$_u"
   done > /tmp/kox-cli-servers.txt 2>/dev/null || true
+  kox_bypass_sync_subscription force >/dev/null 2>&1 || true
   kox_bypass_refresh no-reload 2>/dev/null || true
   ok "config.json и kox.conf обновлены (${NEW_PROTO})"
 

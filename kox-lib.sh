@@ -142,6 +142,9 @@ kox_ensure_https_tools() {
 
 KOX_BYPASS_IPS_FILE="${KOX_BYPASS_IPS_FILE:-/opt/etc/xray/bypass-ips.txt}"
 KOX_BYPASS_IPS_AUTO="${KOX_BYPASS_IPS_AUTO:-/opt/etc/xray/bypass-ips.auto}"
+KOX_BYPASS_IPS_SUB="${KOX_BYPASS_IPS_SUB:-/opt/etc/xray/bypass-ips.sub}"
+KOX_BYPASS_SUB_STAMP="${KOX_BYPASS_SUB_STAMP:-/tmp/kox-bypass-sub.stamp}"
+KOX_BYPASS_SUB_INTERVAL="${KOX_BYPASS_SUB_INTERVAL:-900}"
 KOX_BYPASS_LAN_FILE="${KOX_BYPASS_LAN_FILE:-/opt/etc/xray/bypass-lan.txt}"
 KOX_BYPASS_MARKER="192.0.2.254/32"
 
@@ -691,7 +694,7 @@ kox_bypass_ips_collect() {
   case "${KOX_RELAY_HOST:-}" in
     *.*.*.*) kox_bypass_collect_add "${KOX_RELAY_HOST}" "$_seen" ;;
   esac
-  for _f in "$KOX_BYPASS_IPS_AUTO" "$KOX_BYPASS_IPS_FILE"; do
+  for _f in "$KOX_BYPASS_IPS_AUTO" "$KOX_BYPASS_IPS_FILE" "$KOX_BYPASS_IPS_SUB"; do
     [ -f "$_f" ] || continue
     while IFS= read -r _line; do
       _line=$(printf '%s' "$_line" | sed 's/#.*//; s/^[ \t]*//; s/[ \t]*$//')
@@ -706,6 +709,65 @@ kox_bypass_ips_collect() {
     done < "$_cache" 2>/dev/null
   done
   rm -f "$_seen"
+}
+
+# IPv4-адреса серверов из тела подписки (vless / hysteria2), по одному на строку.
+kox_bypass_hosts_from_body() {
+  _body="$1"
+  _seen="/tmp/kox-bypass-sub-seen.$$"
+  _uris="/tmp/kox-bypass-sub-uris.$$"
+  : > "$_seen"
+  printf '%s\n' "$_body" | grep -E "$KOX_URI_GREP" > "$_uris" 2>/dev/null || true
+  while IFS= read -r _u; do
+    [ -n "$_u" ] || continue
+    _h=$(uri_host "$_u")
+    kox_bypass_collect_add "$_h" "$_seen"
+  done < "$_uris"
+  rm -f "$_seen" "$_uris"
+}
+
+# Забрать адреса серверов из KOX_SUB_URL в bypass-ips.sub.
+# 0 — список изменился, 1 — без изменений или подписка недоступна.
+# «force» игнорирует паузу между проверками.
+kox_bypass_sync_subscription() {
+  _force="${1:-}"
+  if [ -f /opt/etc/xray/kox.conf ]; then
+    # shellcheck disable=SC1091
+    . /opt/etc/xray/kox.conf 2>/dev/null
+  fi
+  [ -n "${KOX_SUB_URL:-}" ] || return 1
+  if [ "$_force" != "force" ]; then
+    _now=$(date +%s 2>/dev/null || echo 0)
+    _last=$(cat "$KOX_BYPASS_SUB_STAMP" 2>/dev/null || echo 0)
+    case "$_now" in ''|*[!0-9]*) _now=0 ;; esac
+    case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+    if [ "$_now" -gt 0 ] && [ "$_last" -gt 0 ]; then
+      _age=$((_now - _last))
+      [ "$_age" -lt "${KOX_BYPASS_SUB_INTERVAL:-900}" ] && return 1
+    fi
+  fi
+  _now=$(date +%s 2>/dev/null || echo 0)
+  printf '%s\n' "$_now" > "$KOX_BYPASS_SUB_STAMP" 2>/dev/null || true
+  _raw=$(curl -fsSL --max-time 12 "${KOX_SUB_URL}" 2>/dev/null || true)
+  [ -n "$_raw" ] || return 1
+  kox_is_html_payload "$_raw" && return 1
+  _body=$(kox_decode_subscription_body "$_raw")
+  _tmp="/tmp/kox-bypass-sub.$$"
+  kox_bypass_hosts_from_body "$_body" | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u > "$_tmp" 2>/dev/null || true
+  if [ ! -s "$_tmp" ]; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  _old=""
+  [ -f "$KOX_BYPASS_IPS_SUB" ] && _old=$(cat "$KOX_BYPASS_IPS_SUB" 2>/dev/null)
+  _new=$(cat "$_tmp" 2>/dev/null)
+  if [ "$_old" = "$_new" ]; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  mkdir -p "$(dirname "$KOX_BYPASS_IPS_SUB")"
+  mv "$_tmp" "$KOX_BYPASS_IPS_SUB"
+  return 0
 }
 
 # Обновить bypass-ips.auto из кэша подписки + kox.conf.
