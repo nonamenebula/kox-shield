@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.11.15.29"
+KOX_VERSION="2026.11.16.30"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -2105,10 +2105,13 @@ _fetch_servers() {
     return 1
   fi
   DECODED=$(printf '%s' "$RAW" | base64 -d 2>/dev/null || printf '%s' "$RAW")
-  local IDX=0
-  printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" | while IFS= read -r VLINE; do
+  # Номера с 1, как в kox switch. Раньше список шёл с 0, и шестой сервер был под номером 5.
+  # Цикл читает файл, а не пайп: на BusyBox Keenetic счётчик внутри «| while» не сохраняется.
+  printf '%s\n' "$DECODED" | grep -E "$KOX_URI_GREP" > /tmp/kox-fetch-uris.txt
+  local IDX=0 HOST PORT ENCODED_REMARK PING_MS VLINE
+  while IFS= read -r VLINE; do
     [ -z "$VLINE" ] && continue
-    local HOST PORT ENCODED_REMARK PING_MS
+    IDX=$((IDX + 1))
     HOST=$(uri_host "$VLINE")
     PORT=$(uri_port "$VLINE"); [ -z "$PORT" ] && PORT=443
     ENCODED_REMARK=$(printf '%s' "$VLINE" | sed 's/.*#//')
@@ -2116,8 +2119,7 @@ _fetch_servers() {
     PING_MS=$(ping -c 1 -W 2 "$HOST" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' | head -1)
     [ -z "$PING_MS" ] && PING_MS="—"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${IDX}" "${HOST}" "${PORT}" "${ENCODED_REMARK}" "${PING_MS}" "${VLINE}"
-    IDX=$((IDX+1))
-  done
+  done < /tmp/kox-fetch-uris.txt
 }
 
 kox_servers() {
