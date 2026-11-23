@@ -4,7 +4,7 @@
 PATH=/opt/sbin:/opt/bin:/sbin:/usr/sbin:/usr/bin:/bin
 export PATH
 
-KOX_VERSION="2026.11.16.30"
+KOX_VERSION="2026.11.23.31"
 
 KOX_LIB="/opt/etc/kox-lib.sh"
 [ -f "$KOX_LIB" ] || KOX_LIB="$(dirname "$0")/kox-lib.sh"
@@ -418,7 +418,10 @@ kox_help() {
   printf "  ${G}kox bypass del <IP>${N}  — убрать IP из обхода\n"
   printf "  ${G}kox bypass list${N}       — список IP без перехвата\n"
   printf "  ${G}kox bypass lan add <IP>${N} — весь ПК без KOX (SSTP ok, Telegram нет)\n"
-  printf "  ${G}kox bypass lan del <IP>${N} — убрать LAN-обход\n\n"
+  printf "  ${G}kox bypass lan del <IP>${N} — убрать LAN-обход\n"
+  printf "  ${G}kox full add <IP>${N}    — весь трафик этого устройства в туннель\n"
+  printf "  ${G}kox full del <IP>${N}    — вернуть устройство к обычным спискам\n"
+  printf "  ${G}kox full list${N}        — устройства с полным туннелем\n\n"
   printf "  ${G}kox log${N}              — последние ошибки Xray\n"
   printf "  ${G}kox log-live${N}         — логи в реальном времени\n"
   printf "  ${G}kox clear-log${N}        — очистить логи\n"
@@ -2399,6 +2402,18 @@ case "$CMD" in
   add-ip)        kox_add_ip "$@" ;;
   del-ip)        kox_del_ip "$@" ;;
   list-ip)       kox_list_ips ;;
+  full)
+    FCMD="${1:-}"; FIP="${2:-}"
+    case "$FCMD" in
+      add)
+        kox_full_tunnel_add "$FIP" && ok "Весь трафик в туннель: ${W}${FIP}${N}" || fail "IP: kox full add 192.168.1.x" ;;
+      del)
+        kox_full_tunnel_del "$FIP" && ok "Полный туннель снят: ${W}${FIP}${N}" || fail "Ошибка" ;;
+      list|"")
+        if [ -s "$KOX_FULL_TUNNEL_FILE" ]; then cat "$KOX_FULL_TUNNEL_FILE"; else info "Список пуст"; fi ;;
+      *) fail "Использование: kox full add|del|list [IP]" ;;
+    esac
+    ;;
   bypass)
     BYCMD="${1:-}"; BYIP="${2:-}"
     case "$BYCMD" in

@@ -200,6 +200,46 @@ kox_xray_ensure_udp_inbound() {
   return 2
 }
 
+# TCP-вход 10811: весь трафик выбранного LAN-адреса, без разбора по доменам.
+kox_xray_ensure_full_inbound() {
+  _conf="${1:-/opt/etc/xray/config.json}"
+  [ -f "$_conf" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  _need=0
+  jq -e '.inbounds[] | select(.tag=="kox-full" and .port==10811)' "$_conf" >/dev/null 2>&1 || _need=1
+  jq -e '.routing.rules[] | select(.inboundTag != null and (.inboundTag | index("kox-full")) and .outboundTag=="kox-proxy")' "$_conf" >/dev/null 2>&1 || _need=1
+  [ "$_need" = "0" ] && return 0
+  _tmp="${_conf}.full.$$"
+  jq '
+    .inbounds |= (map(select(.tag != "kox-full")) + [{
+        tag: "kox-full",
+        listen: "0.0.0.0",
+        port: 10811,
+        protocol: "dokodemo-door",
+        settings: {network: "tcp", followRedirect: true},
+        sniffing: {enabled: true, destOverride: ["http","tls"]}
+      }])
+    | .routing.rules |= (
+        map(select(.inboundTag == null or (.inboundTag | index("kox-full") | not)))
+        | . as $rules
+        | (
+            $rules
+            | to_entries
+            | map(select(.value.outboundTag=="direct" and .value.ip != null and (.value.inboundTag | not)))
+            | .[-1].key
+          ) as $i
+        | if $i != null then
+            $rules[:($i + 1)] + [{"type":"field","inboundTag":["kox-full"],"outboundTag":"kox-proxy"}] + $rules[($i + 1):]
+          else
+            [{"type":"field","inboundTag":["kox-full"],"outboundTag":"kox-proxy"}] + $rules
+          end
+      )
+  ' "$_conf" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 1; }
+  jq -e . "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 1; }
+  mv "$_tmp" "$_conf"
+  return 2
+}
+
 kox_udp_tproxy_active() {
   iptables -t mangle -C PREROUTING -i br0 -j KOX_UDP 2>/dev/null || return 1
   iptables -t mangle -L KOX_UDP -n 2>/dev/null | grep -q TPROXY
@@ -279,6 +319,10 @@ kox_apply_nat_rules() {
   _xray_need=0
   if type kox_xray_ensure_udp_inbound >/dev/null 2>&1; then
     kox_xray_ensure_udp_inbound /opt/etc/xray/config.json
+    [ "$?" = "2" ] && _xray_need=1
+  fi
+  if type kox_xray_ensure_full_inbound >/dev/null 2>&1; then
+    kox_xray_ensure_full_inbound /opt/etc/xray/config.json
     [ "$?" = "2" ] && _xray_need=1
   fi
   if type kox_xray_ensure_game_ports >/dev/null 2>&1; then
@@ -856,6 +900,58 @@ kox_bypass_flush_lan_conntrack() {
   if command -v conntrack >/dev/null 2>&1; then
     conntrack -D -s "$_ip" 2>/dev/null || true
   fi
+}
+
+KOX_FULL_TUNNEL_FILE="${KOX_FULL_TUNNEL_FILE:-/opt/etc/xray/full-tunnel.txt}"
+
+kox_full_tunnel_apply() {
+  if [ -f /tmp/kox-vpn-off ] || ! pgrep xray >/dev/null 2>&1; then
+    return 0
+  fi
+  _need=0
+  if type kox_xray_ensure_full_inbound >/dev/null 2>&1; then
+    kox_xray_ensure_full_inbound /opt/etc/xray/config.json
+    [ "$?" = "2" ] && _need=1
+  fi
+  if [ "$_need" = "1" ]; then
+    ulimit -n 65535 2>/dev/null || true
+    /opt/etc/init.d/S24xray restart >/dev/null 2>&1 || return 1
+    _w=0
+    while [ "$_w" -lt 12 ]; do
+      netstat -ln 2>/dev/null | grep -q ':10811 ' && break
+      sleep 1
+      _w=$((_w + 1))
+    done
+  fi
+  sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh 2>/dev/null || return 1
+  sh /opt/etc/ndm/netfilter.d/99-kox-nat.sh ip6tables 2>/dev/null || true
+  return 0
+}
+
+# Весь трафик одного LAN-адреса в туннель, без списка доменов.
+kox_full_tunnel_add() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  printf '%s' "$_ip" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || return 1
+  mkdir -p "$(dirname "$KOX_FULL_TUNNEL_FILE")"
+  touch "$KOX_FULL_TUNNEL_FILE"
+  if [ -f "$KOX_BYPASS_LAN_FILE" ] && grep -qxF "$_ip" "$KOX_BYPASS_LAN_FILE" 2>/dev/null; then
+    grep -vxF "$_ip" "$KOX_BYPASS_LAN_FILE" > /tmp/kox-bypass-lan.$$ && \
+      mv /tmp/kox-bypass-lan.$$ "$KOX_BYPASS_LAN_FILE"
+  fi
+  grep -qxF "$_ip" "$KOX_FULL_TUNNEL_FILE" 2>/dev/null || printf '%s\n' "$_ip" >> "$KOX_FULL_TUNNEL_FILE"
+  kox_bypass_flush_lan_conntrack "$_ip"
+  kox_full_tunnel_apply
+}
+
+kox_full_tunnel_del() {
+  _ip="$1"
+  [ -z "$_ip" ] && return 1
+  [ -f "$KOX_FULL_TUNNEL_FILE" ] || return 0
+  grep -vxF "$_ip" "$KOX_FULL_TUNNEL_FILE" > /tmp/kox-full.$$ && \
+    mv /tmp/kox-full.$$ "$KOX_FULL_TUNNEL_FILE"
+  kox_bypass_flush_lan_conntrack "$_ip"
+  kox_full_tunnel_apply
 }
 
 kox_bypass_lan_del() {

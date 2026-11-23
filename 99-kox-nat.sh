@@ -57,6 +57,15 @@ _kox_bypass_merge() {
 }
 _kox_bypass_merge
 
+# Выбранные LAN-адреса: весь TCP в отдельный вход, без разбора по доменам.
+if [ "$IPTS" = "iptables" ] && [ -f /opt/etc/xray/full-tunnel.txt ]; then
+  while IFS= read -r _ft _rest; do
+    case "$_ft" in ''|'#'*) continue ;; esac
+    printf '%s' "$_ft" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || continue
+    $IPTS -t nat -A XRAY_REDIRECT -s "$_ft" -p tcp -j REDIRECT --to-ports 10811 2>/dev/null || true
+  done < /opt/etc/xray/full-tunnel.txt
+fi
+
 # HTTP/HTTPS + Supercell 9339. CODM лобби/матч (UDP 5055, 20002…) — не сюда:
 # через HY2 пустой лобби и таймаут, игроки ищутся напрямую.
 $IPTS -t nat -A XRAY_REDIRECT -p tcp --dport 80  -j REDIRECT --to-ports 10808 2>/dev/null || true
@@ -104,6 +113,14 @@ _kox_bypass_quic() {
   rm -f "$_out"
 }
 _kox_bypass_quic
+# Полный туннель: UDP/443 приставки не режем, его заберёт TPROXY ниже.
+if [ "$IPTS" = "iptables" ] && [ -f /opt/etc/xray/full-tunnel.txt ]; then
+  while IFS= read -r _ft _rest; do
+    case "$_ft" in ''|'#'*) continue ;; esac
+    printf '%s' "$_ft" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || continue
+    $IPTS -t mangle -A KOX_QUIC -s "$_ft" -j RETURN 2>/dev/null || true
+  done < /opt/etc/xray/full-tunnel.txt
+fi
 # Tencent / CODM: не резать их QUIC (иначе вход в бой по таймауту). YouTube остаётся DROP.
 for _tcidr in 49.51.0.0/16 170.106.0.0/16 129.226.0.0/16 \
               43.153.0.0/16 43.154.0.0/16 43.159.0.0/16 101.32.0.0/15; do
@@ -166,12 +183,23 @@ if [ "$IPTS" = "iptables" ]; then
       $IPTS -t mangle -A KOX_UDP -d "${_ip}/32" -j RETURN 2>/dev/null || true
     done < "$_udpb"
     rm -f "$_udpb"
+    # Только звонки TG/WA и Clash Royale (свои IP). Не весь интернет-UDP.
+    _kox_udp_n=0
+    # Выбранные LAN-адреса: весь UDP, включая DNS наружу, в туннель.
+    # Правило выше возврата DNS/QUIC, иначе эти порты уйдут мимо.
+    if [ -f /opt/etc/xray/full-tunnel.txt ]; then
+      while IFS= read -r _ft _rest; do
+        case "$_ft" in ''|'#'*) continue ;; esac
+        printf '%s' "$_ft" | grep -qE '^192\.168\.[0-9]+\.[0-9]+$' || continue
+        if $IPTS -t mangle -A KOX_UDP -s "$_ft" -p udp -j TPROXY --on-port 10810 --tproxy-mark 0x2c0c 2>/dev/null; then
+          _kox_udp_n=$((_kox_udp_n + 1))
+        fi
+      done < /opt/etc/xray/full-tunnel.txt
+    fi
     # DNS/DHCP/NTP/QUIC — не трогаем. Остальной UDP игр идёт напрямую.
     for _p in 53 67 68 123 443 1900 5353; do
       $IPTS -t mangle -A KOX_UDP -p udp --dport "$_p" -j RETURN 2>/dev/null || true
     done
-    # Только звонки TG/WA и Clash Royale (свои IP). Не весь интернет-UDP.
-    _kox_udp_n=0
     for _c in \
       149.154.160.0/20 91.108.4.0/22 91.108.8.0/22 91.108.12.0/22 \
       91.108.16.0/22 91.108.20.0/22 91.108.56.0/22 95.161.64.0/20 \

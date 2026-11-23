@@ -607,6 +607,14 @@ generate_config() {
       "sniffing": {"enabled": true, "destOverride": ["http","tls","quic"]}
     },
     {
+      "tag": "kox-full",
+      "listen": "0.0.0.0",
+      "port": 10811,
+      "protocol": "dokodemo-door",
+      "settings": {"network": "tcp", "followRedirect": true},
+      "sniffing": {"enabled": true, "destOverride": ["http","tls"]}
+    },
+    {
       "tag": "kox-tproxy-udp",
       "listen": "0.0.0.0",
       "port": 10810,
@@ -648,6 +656,7 @@ generate_config() {
       {"type":"field","ip":["0.0.0.0/8","10.0.0.0/8","100.64.0.0/10","127.0.0.0/8","169.254.0.0/16","172.16.0.0/12","192.0.0.0/24","192.168.0.0/16","198.18.0.0/15","198.51.100.0/24","203.0.113.0/24","224.0.0.0/4","240.0.0.0/4"],"outboundTag":"direct"},
       {"type":"field","ip":["192.0.2.254/32"],"outboundTag":"direct"},
       {"type":"field","domain":["domain:${VLESS_HOST}"],"outboundTag":"direct"},
+      {"type":"field","inboundTag":["kox-full"],"outboundTag":"kox-proxy"},
       {"type":"field","network":"udp","port":"53","outboundTag":"direct"},
       {
         "type": "field",
