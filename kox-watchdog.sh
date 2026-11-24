@@ -611,6 +611,19 @@ if type kox_bypass_sync_subscription >/dev/null 2>&1; then
     log "Обход обновлён: адреса серверов из подписки"
   fi
 fi
+# Файл обхода уже новый, а iptables старые, если прошлая пересборка не удалась.
+# Подписка при этом не меняется, и проверка выше больше не запускается.
+if [ -s /opt/etc/xray/bypass-ips.auto ] && iptables -t mangle -L KOX_QUIC -n >/dev/null 2>&1; then
+  _miss=0
+  while IFS= read -r _ip; do
+    case "$_ip" in ''|'#'*) continue ;; esac
+    _ip="${_ip%%/*}"
+    iptables -t mangle -C KOX_QUIC -d "$_ip" -p udp --dport 443 -j RETURN 2>/dev/null || _miss=1
+  done < /opt/etc/xray/bypass-ips.auto
+  if [ "$_miss" = 1 ]; then
+    kox_apply_nat_rules >/dev/null 2>&1 && log "Обход: правила догнаны по списку адресов"
+  fi
+fi
 
 # ── 10. Ротация лога ──────────────────────────────────────────────────
 [ "$(wc -l < "$LOGF" 2>/dev/null || echo 0)" -gt 500 ] && \
