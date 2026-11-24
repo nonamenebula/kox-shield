@@ -11,6 +11,29 @@ export PATH
 # Не применять если Xray не запущен — иначе весь трафик уйдёт в никуда
 pgrep xray >/dev/null 2>&1 || exit 0
 
+# Два запуска сразу перемешивают правила. Тогда UDP до роутера
+# уходит в Xray, он занимает порт DNS, и с Wi-Fi пропадают имена.
+_kox_nat_lock=/tmp/kox-nat.lockdir
+if mkdir "$_kox_nat_lock" 2>/dev/null; then
+  echo $$ > "$_kox_nat_lock/pid"
+else
+  _old=$(cat "$_kox_nat_lock/pid" 2>/dev/null)
+  if [ -n "$_old" ] && [ -d "/proc/$_old" ]; then
+    _w=0
+    while [ -d "$_kox_nat_lock" ] && [ "$_w" -lt 50 ]; do
+      sleep 1
+      _w=$((_w + 1))
+    done
+    mkdir "$_kox_nat_lock" 2>/dev/null || exit 0
+    echo $$ > "$_kox_nat_lock/pid"
+  else
+    rm -rf "$_kox_nat_lock"
+    mkdir "$_kox_nat_lock" 2>/dev/null || exit 0
+    echo $$ > "$_kox_nat_lock/pid"
+  fi
+fi
+trap 'rm -rf /tmp/kox-nat.lockdir' EXIT INT TERM
+
 # Полная пересборка цепочки (избегаем «пустой» XRAY_REDIRECT без REDIRECT после -F)
 $IPTS -t nat -D PREROUTING -i br0 -p tcp -j XRAY_REDIRECT 2>/dev/null || true
 $IPTS -t nat -F XRAY_REDIRECT 2>/dev/null || true
